@@ -127,7 +127,7 @@ def test_render_share_button_opens_clip_folder(app_window, monkeypatch, tmp_path
     assert page._share_btn.isEnabled()
     page._share_btn.click()
     assert len(opened) == 1
-    assert opened[0].toLocalFile() == str(clips_dir)
+    assert Path(opened[0].toLocalFile()) == clips_dir
 
 
 def test_open_muse_button(app_window, monkeypatch, tmp_path) -> None:
@@ -147,3 +147,4 @@ def test_open_muse_button(app_window, monkeypatch, tmp_path) -> None:
     buttons[0].click()
     assert len(opened) == 1
     assert opened[0].toString() == "https://muse.ai"
+
