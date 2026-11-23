@@ -26,7 +26,10 @@ EXPECTED_PHOTO_SIZE = (1672, 941)
 def test_branding_photo_file_loads(app_window) -> None:
     path = branding_photo_path()
     assert path == default_branding_photo_path()
-    assert path.exists(), "bundled branding photo missing"
+    if not path.exists():
+        # The bundled portrait is Boss's private photo: it is NOT shipped
+        # in the public repo (added at install only), so CI has no file.
+        pytest.skip("bundled branding photo is not shipped in the public repo")
     pixmap = load_branding_photo()
     assert pixmap is not None and not pixmap.isNull()
     assert (pixmap.width(), pixmap.height()) == EXPECTED_PHOTO_SIZE
@@ -34,10 +37,11 @@ def test_branding_photo_file_loads(app_window) -> None:
 
 def test_branding_photo_override_env(app_window, monkeypatch, tmp_path) -> None:
     """A configured path wins over the bundled file (swappable photo)."""
+    from PySide6.QtGui import QPixmap
+
     fake = tmp_path / "other.png"
-    pixmap = load_branding_photo()
-    assert pixmap is not None
-    pixmap.save(str(fake))
+    pixmap = QPixmap(64, 48)
+    assert pixmap.save(str(fake))
     monkeypatch.setenv("CLIPFORGE_BRANDING_PHOTO", str(fake))
     assert branding_photo_path() == fake
     loaded = load_branding_photo()
@@ -45,6 +49,8 @@ def test_branding_photo_override_env(app_window, monkeypatch, tmp_path) -> None:
 
 
 def test_splash_constructs_with_photo_tiles(app_window) -> None:
+    if load_branding_photo() is None:
+        pytest.skip("bundled branding photo is not shipped in the public repo")
     splash = SplashScreen()
     splash.show()
     try:
@@ -80,6 +86,8 @@ def test_splash_without_photo_falls_back(app_window, monkeypatch) -> None:
 
 
 def test_sidebar_branding_pulses(app_window) -> None:
+    if load_branding_photo() is None:
+        pytest.skip("bundled branding photo is not shipped in the public repo")
     branding = SidebarBranding()
     # The photo label exists with the portrait loaded, and the glow
     # animation runs forever (slow pulse).
@@ -90,11 +98,12 @@ def test_sidebar_branding_pulses(app_window) -> None:
     assert branding._glow_anim.loopCount() == -1
 
 
-def test_whatsapp_share_folder() -> None:
-    assert whatsapp_share_folder("/home/boss/clips/01_clip.mp4") == "/home/boss/clips"
+def test_whatsapp_share_folder(tmp_path) -> None:
+    video = tmp_path / "clips" / "01_clip.mp4"
+    assert whatsapp_share_folder(str(video)) == str(tmp_path / "clips")
 
 
-def test_render_share_button_opens_clip_folder(app_window, monkeypatch) -> None:
+def test_render_share_button_opens_clip_folder(app_window, monkeypatch, tmp_path) -> None:
     """Share via WhatsApp: opens the clip folder, no WhatsApp login/API."""
     opened: list[QUrl] = []
     import PySide6.QtGui as qt_gui
@@ -104,10 +113,11 @@ def test_render_share_button_opens_clip_folder(app_window, monkeypatch) -> None:
     )
     page = RenderPage()
     assert not page._share_btn.isEnabled()
+    clips_dir = tmp_path / "clips"
     result = ClipResult(
         index=1,
-        video_path="/tmp/clips/01_clip.mp4",
-        label_path="/tmp/clips/01_label.txt",
+        video_path=str(clips_dir / "01_clip.mp4"),
+        label_path=str(clips_dir / "01_label.txt"),
         duration=40.0,
         caption="Test caption",
         hashtags=["#a", "#b", "#c", "#d"],
@@ -117,7 +127,7 @@ def test_render_share_button_opens_clip_folder(app_window, monkeypatch) -> None:
     assert page._share_btn.isEnabled()
     page._share_btn.click()
     assert len(opened) == 1
-    assert opened[0].toLocalFile() == "/tmp/clips"
+    assert opened[0].toLocalFile() == str(clips_dir)
 
 
 def test_open_muse_button(app_window, monkeypatch, tmp_path) -> None:
