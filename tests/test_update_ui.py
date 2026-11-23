@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QMessageBox
 
 import clipforge.core.paths as paths_module
 import clipforge.ui.settings_dialog as dialog_module
+import clipforge.core.updates as updates_module
 from clipforge.core.updates import UpdateCheck, UpdateInfo
 from clipforge.ui.settings_dialog import SettingsDialog
 
@@ -88,6 +89,9 @@ def test_updates_tab_one_click_downloads_and_verifies(
         lambda *a, **k: UpdateCheck(True, "ClipForge 0.2.0 is available.", info),
     )
     monkeypatch.setattr(
+        updates_module, "install_update", lambda path: "installer_downloaded"
+    )
+    monkeypatch.setattr(
         QMessageBox, "question",
         classmethod(lambda cls, *a, **k: QMessageBox.StandardButton.Yes),
     )
@@ -107,3 +111,4 @@ def test_updates_tab_one_click_downloads_and_verifies(
     assert (tmp_path / "updates" / "ClipForge-Setup.exe").read_bytes() == INSTALLER_BYTES
     assert list((tmp_path / "backups").glob("*.zip"))
     assert json.loads((tmp_path / "projects.json").read_text())["version"] == 2
+
