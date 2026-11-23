@@ -137,8 +137,16 @@ class RenderJob:
 # ----------------------------------------------------------------------
 
 def _escape_filter_arg(value: str) -> str:
-    """Quote a filter argument for a filtergraph (handles :, ', \\)."""
-    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+    """Quote a path argument for a filtergraph.
+
+    ffmpeg's filtergraph parser cannot take a raw Windows path: a
+    backslash is an escape character there, and an unescaped drive
+    colon ends the option value early ("No option name near ...").
+    Forward slashes work on Windows too, so normalise to them,
+    escape the drive colon, and single-quote the whole value.
+    """
+    escaped = value.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+    return "'" + escaped + "'"
 
 
 def _sendcmd_file(
@@ -662,3 +670,4 @@ def cleanup_clipforge_temp(max_age_days: float = 7.0) -> int:
         except OSError:
             continue
     return removed
+
