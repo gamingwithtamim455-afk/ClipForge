@@ -71,6 +71,12 @@ class Job(QObject):
         self._cancelled = False
         self._thread: QThread | None = None
         self._worker: _Worker | None = None
+        if parent is not None:
+            # A job must never outlive its owner: if the owning widget is
+            # destroyed while the thread is still running, Qt destroys the
+            # QThread mid-run, which aborts the whole process on Windows
+            # (0xC0000409). Shut the thread down with the owner instead.
+            parent.destroyed.connect(lambda *_: self.shutdown())
 
     def start(self) -> None:
         """Start the job in a new thread."""
@@ -80,6 +86,7 @@ class Job(QObject):
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.done.connect(self._on_done)
+        self._thread.finished.connect(self._on_thread_finished)
         self._thread.start()
 
     @Slot(object, bool, str)
@@ -91,6 +98,16 @@ class Job(QObject):
         if self._thread is not None:
             self._thread.quit()
 
+    @Slot()
+    def _on_thread_finished(self) -> None:
+        """The thread has stopped: release it and the worker for deletion."""
+        if self._worker is not None:
+            self._worker.deleteLater()
+            self._worker = None
+        if self._thread is not None:
+            self._thread.deleteLater()
+            self._thread = None
+
     def request_cancel(self) -> None:
         """Ask the running function to stop at its next checkpoint."""
         self._cancelled = True
@@ -98,9 +115,13 @@ class Job(QObject):
     def shutdown(self, timeout_ms: int = 2000) -> None:
         """Stop the thread (best effort) — call when the owner is closing."""
         self.request_cancel()
-        if self._thread is not None and self._thread.isRunning():
-            self._thread.quit()
-            self._thread.wait(timeout_ms)
+        if self._thread is not None:
+            try:
+                if self._thread.isRunning():
+                    self._thread.quit()
+                    self._thread.wait(timeout_ms)
+            except RuntimeError:
+                pass  # thread object already deleted — nothing to stop
 
 
 def run_job(

@@ -110,6 +110,10 @@ def test_ass_presets_differ() -> None:
         "Keyword Pop", "Keyword Italic", "Impact", "Gary Vee", "Glow",
         "Gradient", "Lower Third", "Outline", "Clean Pop",
         "Headline Script", "Emerald Glow", "Stacked", "Keyword Boxes",
+        # FuseClip preset names (v0.2.2, Boss's parity request).
+        "Mumbai", "Numaya", "Josh", "Aks", "Rang", "Noor", "Rawani",
+        "Lehar", "Orbit", "Bayan", "Headline", "Lakeer", "Uchhaal",
+        "Ali Abdaal", "Karachi", "Lafz", "Shamani", "Saaf",
     }
 
 
@@ -769,3 +773,186 @@ def test_layout_validated() -> None:
 def test_layout_defaults_change_nothing() -> None:
     # A default layout produces exactly the same document as no layout.
     assert build_ass(_words(), layout=CaptionLayout()) == build_ass(_words())
+
+
+# ---------------------------------------------------------------------------
+# v0.2.2: FuseClip preset parity, per-preset anchors, position sanity
+# ---------------------------------------------------------------------------
+
+#: The FuseClip style names Boss asked to find in the picker.
+FUSECLIP_PRESET_NAMES = {
+    "Mumbai", "Numaya", "Josh", "Aks", "Rang", "Noor", "Rawani",
+    "Lehar", "Orbit", "Bayan", "Headline", "Lakeer", "Uchhaal",
+    "Ali Abdaal", "Karachi", "Lafz", "Shamani", "Saaf",
+}
+
+
+def test_fuseclip_preset_names_all_exist() -> None:
+    """Every FuseClip preset name exists (Boss's parity request)."""
+    assert FUSECLIP_PRESET_NAMES <= set(PRESETS)
+    for name in FUSECLIP_PRESET_NAMES:
+        preset = PRESETS[name]
+        # A plausible look: a real bundled font (or the language
+        # default) and an animation the renderer implements.
+        assert preset.animation in (
+            "pop", "karaoke", "typewriter", "slide", "bounce", "fade",
+            "box", "keyword", "impact", "glow", "garyvee", "gradient",
+            "lowerthird", "outline", "cleanpop", "dualfont", "stacked",
+            "keywordbox",
+        )
+
+
+def test_fuseclip_signature_looks() -> None:
+    """The frame-analysed FuseClip looks match their descriptions."""
+    # Mumbai: Anton caps + Kaushan Script keyword in yellow.
+    ass = build_ass(_fox_words(), preset_name="Mumbai")
+    assert "\\fnKaushan Script" in ass and "\\fnAnton" in ass
+    # Numaya: the emphasised word glows FuseClip green (#A0D83E).
+    ass = build_ass(_fox_words(), preset_name="Numaya")
+    assert "&H003ED8A0&" in ass
+    # Josh: magenta keyword.
+    ass = build_ass(_fox_words(), preset_name="Josh")
+    assert "&H00C62DFF&" in ass
+    # Rawani: teal keyword (#14B8A6).
+    ass = build_ass(_fox_words(), preset_name="Rawani")
+    assert "&H00A6B814&" in ass
+    # Rang: per-keyword boxes in both box styles.
+    ass = build_ass(_fox_words(), preset_name="Rang")
+    assert "Style: Box," in ass and "Style: Box2," in ass
+    # Headline: stacked one-word-per-line events.
+    dialogues = _dialogues(build_ass(_fox_words(), preset_name="Headline"))
+    assert len(dialogues) == 4
+    assert all("\\pos(" in d for d in dialogues)
+
+
+def _style_margin_v(ass: str) -> int:
+    style = [
+        line for line in ass.splitlines() if line.startswith("Style: Default")
+    ][0]
+    return int(style.rsplit(",", 2)[1])
+
+
+def test_preset_anchor_keyword_family_lower_middle() -> None:
+    """Keyword-family presets anchor at v=70% (the reference frames'
+    lower-middle block), not the 86% safe-zone default."""
+    for name in ("Keyword Pop", "Impact", "Stacked", "Mumbai", "Headline"):
+        ass = build_ass(_words(), preset_name=name, width=1080, height=1920)
+        # Bottom margin = (100 - 70)% of 1920.
+        assert _style_margin_v(ass) == int(1920 * 0.30), name
+    # Plain styles keep the historical safe-zone anchor.
+    ass = build_ass(_words(), preset_name="Hormozi", width=1080, height=1920)
+    assert _style_margin_v(ass) == int(1920 * 0.14)
+
+
+def test_preset_anchor_user_position_wins() -> None:
+    """A user-chosen Fonts-tab position overrides the preset anchor."""
+    ass = build_ass(
+        _words(), preset_name="Keyword Pop", width=1080, height=1920,
+        layout=CaptionLayout(v_pct=90.0),
+    )
+    assert _style_margin_v(ass) == int(1920 * 0.10)
+
+
+def test_every_preset_positions_inside_frame() -> None:
+    """Position sanity for every preset at every output ratio.
+
+    Parses the generated ASS at 9:16, 1:1 and 16:9 sizes: the style
+    margin must be a legal in-frame value and every explicit \\pos
+    coordinate must land inside the frame.
+    """
+    import re
+
+    pos_re = re.compile(r"\\pos\((-?\d+),(-?\d+)\)")
+    sizes = [(1080, 1920), (1080, 1080), (1920, 1080), (360, 640)]
+    for name in PRESETS:
+        for width, height in sizes:
+            ass = build_ass(
+                _words(), preset_name=name, width=width, height=height
+            )
+            margin_v = _style_margin_v(ass)
+            assert 0 <= margin_v < height, (name, width, height)
+            for match in pos_re.finditer(ass):
+                x, y = int(match.group(1)), int(match.group(2))
+                assert 0 <= x <= width, (name, width, height, x)
+                assert 0 <= y <= height, (name, width, height, y)
+
+
+def test_stacked_block_shrinks_to_fit_short_frame() -> None:
+    """A tall stack on a short (16:9) frame shrinks instead of
+    running off the top/bottom edge."""
+    import re
+
+    # Eight fast words fit ONE caption line (1.2 s < the 1.5 s cap),
+    # so the stack is 8 rows; a 10%-of-height font makes the natural
+    # block (8 x 1.25 x 108 = 1080 px) taller than the space between
+    # the v=70 anchor and the top of the 1080-tall frame.
+    words = [
+        Word(text, i * 0.15, (i + 1) * 0.15)
+        for i, text in enumerate(
+            ["one", "two", "three", "four", "five", "six", "seven", "eight"]
+        )
+    ]
+    ass = build_ass(
+        words, preset_name="Stacked", width=1920, height=1080,
+        layout=CaptionLayout(words_per_line=8, font_size_pct=10.0),
+    )
+    ys = [
+        int(m.group(1))
+        for m in re.finditer(r"\\pos\(\d+,(\d+)\)", ass)
+    ]
+    assert len(ys) == 8, "one event per stacked word"
+    assert all(0 <= y <= 1080 for y in ys)
+    # Rows shrunk to fit: the block's last row sits at the anchor
+    # (bottom edge = 70% of 1080 = 756) and no row uses the natural
+    # 108 px font.
+    assert max(ys) == 756
+    assert "\\fs108" not in ass
+
+
+def test_block_height_covers_stacked_and_keyword() -> None:
+    """The face-avoidance zone uses the real block height."""
+    from clipforge.core.captions import caption_block_height
+
+    layout = CaptionLayout()
+    stacked = caption_block_height(PRESETS["Stacked"], layout, 96)
+    assert stacked == pytest.approx(4 * 96 * 1.25)  # 4 words x 1.25 rows
+    keyword = caption_block_height(PRESETS["Keyword Pop"], layout, 64)
+    assert keyword >= 2.0 * 64  # the 2x keyword word sets the height
+    plain = caption_block_height(PRESETS["Hormozi"], layout, 64)
+    assert plain == pytest.approx(2.8 * 64)
+
+
+def test_every_preset_renders_a_frame_with_captions_inside(tmp_path) -> None:
+    """Every preset burns onto a real frame; caption pixels exist and
+    the frame is exactly the requested size (libass draws in-frame by
+    construction — this proves no preset errors or renders blank)."""
+    import subprocess
+
+    from clipforge.core.ffmpeg import find_ffmpeg, probe
+
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg
+    for name in PRESETS:
+        ass = build_ass(
+            _fox_words(), preset_name=name, width=360, height=640
+        )
+        ass_path = tmp_path / "c.ass"
+        ass_path.write_text(ass, encoding="utf-8")
+        out = tmp_path / "f.png"
+        subprocess.run(
+            [
+                ffmpeg, "-y", "-v", "error",
+                "-f", "lavfi", "-i", "color=c=black:s=360x640:r=30:d=2",
+                "-vf", f"ass={ass_path}:fontsdir={fonts_dir()}",
+                "-ss", "0.6", "-frames:v", "1", str(out),
+            ],
+            check=True,
+        )
+        info = probe(str(out))
+        assert (info.width, info.height) == (360, 640), name
+        # Caption pixels: the black background gained non-black pixels.
+        import cv2
+        import numpy as np
+
+        frame = cv2.imread(str(out))
+        assert frame is not None and np.max(frame) > 40, name

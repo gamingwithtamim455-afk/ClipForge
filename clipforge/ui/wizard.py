@@ -212,6 +212,10 @@ class WizardPage(QWidget):
         self.reset()
         self._project = project
         self._project_label.setText(project.name)
+        # Restore the project's saved Clip & Framing choices (reset()
+        # put the defaults back; the project's own ratio/quality win).
+        self._viral.set_aspect(project.aspect or "9:16")
+        self._viral.set_quality(project.quality or "1080p")
         # Opening a project must open the project: load its source video
         # (probe + preview + Viral Clips step) and restore its saved clips
         # on the timeline. Before this, set_project never loaded the

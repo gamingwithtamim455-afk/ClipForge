@@ -37,7 +37,7 @@ from __future__ import annotations
 import shutil
 import struct
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 
@@ -60,6 +60,7 @@ __all__ = [
     "PRESETS",
     "build_ass",
     "bundled_font_family",
+    "caption_block_height",
     "caption_zone_clear",
     "choose_caption_placement",
     "font_family_for_language",
@@ -378,6 +379,16 @@ class CaptionPreset:
     # this script font family (e.g. "Kaushan Script") instead of the
     # preset's font, at the keyword size.
     script_font: str = ""
+    # Vertical anchor: the caption block's bottom edge as % of frame
+    # height (FuseClip's "Position V"). None = the shared default (the
+    # layout's v_pct, 86 = the TikTok safe zone). The keyword-emphasis
+    # family anchors at 70: in Boss's reference frames (docs/caption-
+    # style-references 01 and 03) the big keyword block sits in the
+    # lower-middle, just under the speaker's chin (~52-70% of height),
+    # NOT down in the safe zone. A preset anchor applies only while
+    # the user has not moved the captions in the Fonts tab — a
+    # user-chosen position always wins (see build_ass).
+    v_pct: float | None = None
 
 
 # Colours are ASS &HAABBGGRR (alpha 00 = opaque).
@@ -402,6 +413,7 @@ _MAGENTA = "&H00C62DFF"  # #FF2DC6 — sample 1, "pyaar"
 _RED = "&H002D2DFF"  # #FF2D2D — samples 3 and 5
 _BLUE = "&H00F6823B"  # #3B82F6 — sample 6 gradient bottom
 _GREEN_GLOW = "&H003ED8A0"  # #A0D83E — FuseClip Numaya emphasize green
+_TEAL = "&H00A6B814"  # #14B8A6 — FuseClip Rawani keyword teal
 
 PRESETS: dict[str, CaptionPreset] = {
     # Viral podcast styles first: Hormozi pop and karaoke word highlight
@@ -422,14 +434,14 @@ PRESETS: dict[str, CaptionPreset] = {
         "Keyword Pop", 64, True, _WHITE, _YELLOW, 2.5, 1.0,
         "keyword", "Keyword Pop — কীওয়ার্ড পপ",
         font="Poppins ExtraBold", keyword_scale=2.0, keyword=_MAGENTA,
-        max_words=3,
+        max_words=3, v_pct=70.0,
     ),
     # Sample 2 "Stress": small white italic words, keyword huge in yellow.
     "Keyword Italic": CaptionPreset(
         "Keyword Italic", 64, True, _WHITE, _YELLOW, 2.5, 1.0,
         "keyword", "Keyword Italic — কীওয়ার্ড ইটালিক",
         font="Poppins ExtraBold", keyword_scale=2.0, keyword_italic=True,
-        keyword=_YELLOW, max_words=3,
+        keyword=_YELLOW, max_words=3, v_pct=70.0,
     ),
     # Sample 3 "NEVER EDIT / IN CAPCUT": huge bold condensed all-caps,
     # lines alternating red and white.
@@ -437,6 +449,7 @@ PRESETS: dict[str, CaptionPreset] = {
         "Impact", 110, True, _WHITE, _YELLOW, 3.0, 2.0,
         "impact", "Impact — ইমপ্যাক্ট",
         font="Anton", uppercase=True, keyword=_RED, max_words=4,
+        v_pct=70.0,
     ),
     # Sample 5 "GARY VEE": small yellow + white words, last two words
     # huge in red, heavy condensed all-caps.
@@ -444,7 +457,7 @@ PRESETS: dict[str, CaptionPreset] = {
         "Gary Vee", 64, True, _WHITE, _YELLOW, 3.0, 2.0,
         "garyvee", "Gary Vee — গ্যারি ভি",
         font="Anton", uppercase=True, keyword_mode="last_two",
-        keyword_scale=1.9, keyword=_RED, max_words=3,
+        keyword_scale=1.9, keyword=_RED, max_words=3, v_pct=70.0,
     ),
     # Sample 4 "like this": thin small white words + huge bold white
     # keyword with a soft glow.
@@ -452,7 +465,7 @@ PRESETS: dict[str, CaptionPreset] = {
         "Glow", 56, True, _WHITE, _YELLOW, 1.5, 0.0,
         "glow", "Glow — গ্লো",
         font="Poppins ExtraBold", keyword_scale=2.0, keyword=_WHITE,
-        max_words=3,
+        max_words=3, v_pct=70.0,
     ),
     # Sample 6 "trendy effect": huge heavy text with a vertical gradient
     # fill (white on top fading to blue at the bottom).
@@ -522,7 +535,7 @@ PRESETS: dict[str, CaptionPreset] = {
         "Headline Script", 72, True, _WHITE, _YELLOW, 2.5, 1.0,
         "dualfont", "Headline Script — হেডলাইন স্ক্রিপ্ট",
         font="Anton", script_font="Kaushan Script", uppercase=True,
-        keyword_scale=1.6, keyword=_YELLOW, max_words=3,
+        keyword_scale=1.6, keyword=_YELLOW, max_words=3, v_pct=70.0,
     ),
     # Green-glow emphasize: white text, the keyword glowing green — the
     # Numaya look, ClipForge's own.
@@ -530,7 +543,7 @@ PRESETS: dict[str, CaptionPreset] = {
         "Emerald Glow", 56, True, _WHITE, _YELLOW, 1.5, 0.0,
         "glow", "Emerald Glow — এমারাল্ড গ্লো",
         font="Poppins ExtraBold", keyword_scale=2.0, keyword=_GREEN_GLOW,
-        max_words=3,
+        max_words=3, v_pct=70.0,
     ),
     # Stacked headline: each word on its own line, huge bold all-caps,
     # centred — the Headline look, ClipForge's own.
@@ -538,6 +551,7 @@ PRESETS: dict[str, CaptionPreset] = {
         "Stacked", 96, True, _WHITE, _YELLOW, 3.0, 2.0,
         "stacked", "Stacked — স্ট্যাকড",
         font="Anton", uppercase=True, keyword=_WHITE, max_words=4,
+        v_pct=70.0,
     ),
     # Per-keyword highlight boxes: every content word in its own box,
     # alternating yellow / magenta — the Rang look, ClipForge's own.
@@ -545,7 +559,133 @@ PRESETS: dict[str, CaptionPreset] = {
         "Keyword Boxes", 64, True, _WHITE, _YELLOW, 0.0, 0.0,
         "keywordbox", "Keyword Boxes — কীওয়ার্ড বক্স",
         font="Poppins ExtraBold", uppercase=True, keyword_mode="content",
-        keyword=_MAGENTA, max_words=4,
+        keyword=_MAGENTA, max_words=4, v_pct=70.0,
+    ),
+    # --- FuseClip preset names (Boss, 2026-11-23) -----------------------
+    # Boss works in FuseClip daily and asked for its style names to
+    # exist here with matching looks, alongside ClipForge's own names
+    # above (nothing was removed — users may have chosen any of them).
+    # The seven frame-analysed looks (docs/caption-style-references/
+    # fuseclip-styles-analysis.md) map onto the existing animation
+    # machinery; the rest are plausible designs in the same family.
+    # Mumbai: Anton caps + Kaushan Script keyword, yellow (FuseClip's
+    # dual-font headline look — same design as Headline Script).
+    "Mumbai": CaptionPreset(
+        "Mumbai", 72, True, _WHITE, _YELLOW, 2.5, 1.0,
+        "dualfont", "Mumbai — মুম্বাই",
+        font="Anton", script_font="Kaushan Script", uppercase=True,
+        keyword_scale=1.6, keyword=_YELLOW, max_words=3, v_pct=70.0,
+    ),
+    # Numaya: white text, the emphasised word glowing green (#A0D83E).
+    "Numaya": CaptionPreset(
+        "Numaya", 56, True, _WHITE, _YELLOW, 1.5, 0.0,
+        "glow", "Numaya — নুমায়া",
+        font="Montserrat", keyword_scale=2.0, keyword=_GREEN_GLOW,
+        max_words=3, v_pct=70.0,
+    ),
+    # Josh: magenta keyword + small white words.
+    "Josh": CaptionPreset(
+        "Josh", 64, True, _WHITE, _YELLOW, 2.5, 1.0,
+        "keyword", "Josh — জোশ",
+        font="Poppins ExtraBold", keyword_scale=2.0, keyword=_MAGENTA,
+        max_words=3, v_pct=70.0,
+    ),
+    # Aks: big graphic all-caps block (FuseClip's preview is a graphic
+    # "A" over stripes; here the Impact two-tone block in white).
+    "Aks": CaptionPreset(
+        "Aks", 100, True, _WHITE, _YELLOW, 3.0, 2.0,
+        "impact", "Aks — আকস",
+        font="Anton", uppercase=True, keyword=_WHITE, max_words=3,
+        v_pct=70.0,
+    ),
+    # Rang: per-keyword highlight boxes, yellow / magenta.
+    "Rang": CaptionPreset(
+        "Rang", 64, True, _WHITE, _YELLOW, 0.0, 0.0,
+        "keywordbox", "Rang — রং",
+        font="Poppins ExtraBold", uppercase=True, keyword_mode="content",
+        keyword=_MAGENTA, max_words=4, v_pct=70.0,
+    ),
+    # Noor ("light"): soft white glow keyword, thin small words.
+    "Noor": CaptionPreset(
+        "Noor", 56, True, _WHITE, _YELLOW, 1.5, 0.0,
+        "glow", "Noor — নূর",
+        font="Poppins ExtraBold", keyword_scale=1.8, keyword=_WHITE,
+        max_words=3, v_pct=70.0,
+    ),
+    # Rawani: teal-green keyword + small white words.
+    "Rawani": CaptionPreset(
+        "Rawani", 64, True, _WHITE, _YELLOW, 2.5, 1.0,
+        "keyword", "Rawani — রাওয়ানি",
+        font="Poppins ExtraBold", keyword_scale=2.0, keyword=_TEAL,
+        max_words=3, v_pct=70.0,
+    ),
+    # Lehar ("wave"): lines slide in like a wave, heavy sans.
+    "Lehar": CaptionPreset(
+        "Lehar", 64, True, _WHITE, _YELLOW, 2.5, 1.0,
+        "slide", "Lehar — লেহার",
+        font="Montserrat Black",
+    ),
+    # Orbit: bouncy pop-in karaoke.
+    "Orbit": CaptionPreset(
+        "Orbit", 64, True, _WHITE, _YELLOW, 2.5, 1.0,
+        "bounce", "Orbit — অরবিট",
+        font="Poppins ExtraBold",
+    ),
+    # Bayan: the quiet professional look — gentle pulse, no colour pop.
+    "Bayan": CaptionPreset(
+        "Bayan", 60, True, _WHITE, _WHITE, 1.5, 0.0,
+        "cleanpop", "Bayan — বয়ান",
+        font="Montserrat",
+    ),
+    # Headline: stacked bold all-caps, one word per line, centred.
+    "Headline": CaptionPreset(
+        "Headline", 96, True, _WHITE, _YELLOW, 3.0, 2.0,
+        "stacked", "Headline — হেডলাইন",
+        font="Anton", uppercase=True, keyword=_WHITE, max_words=4,
+        v_pct=70.0,
+    ),
+    # Lakeer ("line/stroke"): outline-only letterforms.
+    "Lakeer": CaptionPreset(
+        "Lakeer", 72, True, _WHITE, _YELLOW, 4.0, 0.0,
+        "outline", "Lakeer — লাকির",
+        font="Archivo Black", keyword=_YELLOW,
+    ),
+    # Uchhaal ("jump"): big caps bouncing in.
+    "Uchhaal": CaptionPreset(
+        "Uchhaal", 72, True, _WHITE, _YELLOW, 2.5, 1.0,
+        "bounce", "Uchhaal — উচ্ছাল",
+        font="Anton", uppercase=True,
+    ),
+    # Ali Abdaal: clean bold karaoke sweep, white + yellow highlight.
+    "Ali Abdaal": CaptionPreset(
+        "Ali Abdaal", 62, True, _WHITE, _YELLOW, 2.5, 1.0,
+        "karaoke", "Ali Abdaal — আলি আবদাল",
+        font="Montserrat Black",
+    ),
+    # Karachi: condensed caps, yellow keyword.
+    "Karachi": CaptionPreset(
+        "Karachi", 64, True, _WHITE, _YELLOW, 2.5, 1.0,
+        "keyword", "Karachi — করাচি",
+        font="Bebas Neue", keyword_scale=1.9, keyword=_YELLOW,
+        max_words=3, v_pct=70.0,
+    ),
+    # Lafz ("word"): words appear one by one (typewriter).
+    "Lafz": CaptionPreset(
+        "Lafz", 60, True, _WHITE, _YELLOW, 2.5, 1.0,
+        "typewriter", "Lafz — লফজ",
+        font="Montserrat",
+    ),
+    # Shamani: soft fade-in, rounded sans.
+    "Shamani": CaptionPreset(
+        "Shamani", 60, True, _WHITE, _YELLOW, 2.5, 1.0,
+        "fade", "Shamani — শামানি",
+        font="Poppins",
+    ),
+    # Saaf ("clean"): plain white, thin outline, no shadow.
+    "Saaf": CaptionPreset(
+        "Saaf", 56, False, _WHITE, _YELLOW, 1.0, 0.0,
+        "pop", "Saaf — সাফ",
+        font="Montserrat",
     ),
 }
 
@@ -817,6 +957,32 @@ class CaptionPlacement:
     alignment: int  # ASS alignment: 2 = bottom-center, 8 = top-center
     margin_v: int  # px from the screen edge (bottom or top)
     font_size: int  # effective font size (may be shrunk to fit)
+    # Real block height in px when the caller knows it (stacked /
+    # merged-line blocks are taller than the classic two-line zone);
+    # None = the classic ~2.8x font size estimate.
+    zone_height: float | None = None
+
+
+def caption_block_height(
+    preset: "CaptionPreset", layout: "CaptionLayout", font_size: int
+) -> float:
+    """Upper bound on one caption block's height, in output pixels.
+
+    The face-avoidance zone must cover the WHOLE block. The historical
+    zone (2.8x the font size ≈ two lines) underestimated two designs:
+    the stacked headline puts every word on its own row (up to
+    ``words_per_line`` x ``lines`` rows at 1.25x), and a keyword word
+    at 2x scale makes its line ~2.4x tall. A face could sit inside the
+    real block while the smaller zone check passed — captions landing
+    on the speaker. This bound is what the zone check now uses.
+    """
+    lines = layout.lines or 1
+    if preset.animation == "stacked":
+        rows = (layout.words_per_line or preset.max_words) * lines
+        return rows * font_size * 1.25
+    if preset.keyword_scale > 1.0:
+        return max(2.8, lines * 1.4, preset.keyword_scale * 1.3) * font_size
+    return max(2.8, lines * 1.4) * font_size
 
 
 def _zone_rect(
@@ -824,9 +990,14 @@ def _zone_rect(
 ) -> tuple[float, float, float, float]:
     """Caption zone as (x, y, w, h) in output pixels.
 
-    Up to two lines of text, so the zone is ~2.8x the font size tall.
+    Up to two lines of text, so the zone is ~2.8x the font size tall —
+    or the real block height when the placement carries one.
     """
-    zone_h = placement.font_size * 2.8
+    zone_h = (
+        placement.zone_height
+        if placement.zone_height is not None
+        else placement.font_size * 2.8
+    )
     margin_lr = int(SIDE_MARGIN * width / 1080.0)
     if placement.alignment == 8:  # top-center
         return (margin_lr, placement.margin_v, width - 2 * margin_lr, zone_h)
@@ -873,6 +1044,7 @@ def choose_caption_placement(
     margin_v: int,
     align: str = "center",
     prefer_top: bool = False,
+    zone_height: float | None = None,
 ) -> tuple[CaptionPlacement, bool]:
     """Pick a caption zone that never overlaps a face.
 
@@ -880,9 +1052,11 @@ def choose_caption_placement(
     frame. Tries the preferred zone first (bottom by default, top when
     ``prefer_top`` — the layout's vertical % is under 50), then the
     other zone, then the top zone with a smaller font. ``align`` is
-    ``"left"`` / ``"center"`` / ``"right"``. Returns ``(placement,
-    safe)`` — ``safe`` is False only when no placement clears every
-    face (best effort then).
+    ``"left"`` / ``"center"`` / ``"right"``. ``zone_height`` is the
+    real caption block height (see :func:`caption_block_height`) so
+    tall blocks are checked whole, not by the two-line estimate.
+    Returns ``(placement, safe)`` — ``safe`` is False only when no
+    placement clears every face (best effort then).
     """
     first = "top" if prefer_top else "bottom"
     for zone in (first, "top" if first == "bottom" else "bottom"):
@@ -890,6 +1064,7 @@ def choose_caption_placement(
             alignment=_align_code(align, top=zone == "top"),
             margin_v=margin_v,
             font_size=font_size,
+            zone_height=zone_height,
         )
         if caption_zone_clear(face_rects, placement, width=width, height=height):
             return placement, True
@@ -897,6 +1072,9 @@ def choose_caption_placement(
         alignment=_align_code(align, top=True),
         margin_v=margin_v,
         font_size=max(16, int(font_size * 0.75)),
+        zone_height=(
+            zone_height * 0.75 if zone_height is not None else None
+        ),
     )
     return shrunk, caption_zone_clear(
         face_rects, shrunk, width=width, height=height
@@ -1270,6 +1448,10 @@ def _line_events(
                 top = float(placement.margin_v)
             else:
                 top = height - placement.margin_v - block_h
+            # The clip bands must stay inside the frame even when a
+            # merged-line block is taller than the space below/above
+            # the anchor (short 16:9 frames, big fonts).
+            top = min(max(top, 0.0), max(0.0, height - block_h))
             for band in range(band_count):
                 ratio = (band + 0.5) / band_count
                 band_hex = _gradient_band_color(stops, ratio)
@@ -1293,12 +1475,24 @@ def _line_events(
             # all-caps, centred — the whole block visible for the
             # block's duration, the keyword word in the keyword colour.
             flat = [w for l in lines for w in l]
-            row_h = font_size * 1.25
+            # Fit-to-frame: a tall stack (many words, a big font, a
+            # short frame — 16:9 output is only 1080 tall at 1080p)
+            # must never run off the top or bottom edge. When the
+            # natural block is taller than the space between the
+            # anchor and the frame edge, the rows shrink to fit.
+            stack_fs = font_size
+            row_h = stack_fs * 1.25
             block_h = row_h * len(flat)
+            available = max(40.0, height - placement.margin_v)
+            if flat and block_h > available:
+                stack_fs = max(10, int(font_size * available / block_h))
+                row_h = stack_fs * 1.25
+                block_h = row_h * len(flat)
             if placement.alignment in (7, 8, 9):
                 top = float(placement.margin_v)
             else:
                 top = height - placement.margin_v - block_h
+            top = max(0.0, top)
             keyword_idx = pick_keyword(flat, mode=preset.keyword_mode)
             for i, word in enumerate(flat):
                 y_i = top + (i + 1) * row_h
@@ -1310,7 +1504,7 @@ def _line_events(
                     "Dialogue: 0,"
                     f"{start},{end},Default,,0,0,0,,"
                     f"{{\\pos({pos_x},{y_i:.0f})"
-                    f"\\fs{font_size}\\c{color}&}}"
+                    f"\\fs{stack_fs}\\c{color}&}}"
                     f"{text}"
                 )
         elif animation == "keywordbox":
@@ -1418,6 +1612,12 @@ def build_ass(
     """
     preset = PRESETS.get(preset_name, PRESETS["Hormozi"])
     layout = (layout or CaptionLayout()).validated()
+    if preset.v_pct is not None and layout.v_pct == CaptionLayout().v_pct:
+        # The preset's own vertical anchor (CaptionPreset.v_pct)
+        # applies only while the layout still carries the untouched
+        # default — any position the user picked in the Fonts tab
+        # (a non-default v_pct) always wins.
+        layout = replace(layout, v_pct=float(preset.v_pct))
     font_size = layout_font_size(preset, height, layout)
     margin_v = layout_margin_v(height, layout)
     margin_lr = int(SIDE_MARGIN * width / 1080.0)
@@ -1448,6 +1648,7 @@ def build_ass(
             face_rects, width=width, height=height,
             font_size=font_size, margin_v=margin_v,
             align=eff_align, prefer_top=layout.v_pct < 50,
+            zone_height=caption_block_height(preset, layout, font_size),
         )
     else:
         placement = CaptionPlacement(

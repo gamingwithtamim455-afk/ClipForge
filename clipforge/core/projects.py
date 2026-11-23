@@ -10,6 +10,8 @@ Schema history:
   ``status`` ("new" | "clips_ready" | "rendered"), ``source_duration``
   (seconds, float), ``thumbnail`` (path to a JPEG frame) and
   ``export_dir`` (where this project's clips were written).
+- v2 (later, no version bump — defaults fill in): ``aspect`` and
+  ``quality``, the project's Clip & Framing choices.
 
 Weekly backups are handled by :mod:`clipforge.core.backups`.
 
@@ -69,6 +71,12 @@ class Project:
     source_duration: float = 0.0  # seconds
     thumbnail: str = ""  # path to a JPEG frame ("" = placeholder art)
     export_dir: str = ""  # where this project's clips were written
+    # Clip & Framing choices, persisted per project (v0.2.2): the ratio
+    # the user picked for THIS project is restored when it is reopened
+    # instead of silently reverting to 9:16. Defaults fill in for older
+    # files via from_dict, so no schema bump is needed.
+    aspect: str = "9:16"  # "9:16" | "1:1" | "16:9"
+    quality: str = "1080p"  # "1080p" | "1440p" | "4K"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -93,6 +101,8 @@ def migrate_project_dict(data: dict, from_version: int) -> dict:
         migrated.setdefault("source_duration", 0.0)
         migrated.setdefault("thumbnail", "")
         migrated.setdefault("export_dir", "")
+    migrated.setdefault("aspect", "9:16")
+    migrated.setdefault("quality", "1080p")
     return migrated
 
 

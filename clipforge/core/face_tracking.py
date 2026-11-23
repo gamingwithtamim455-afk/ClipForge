@@ -42,6 +42,7 @@ __all__ = [
     "models_dir",
     "scene_cut_flags",
     "smooth_path_1d",
+    "split_layout_for_aspect",
     "track_faces",
 ]
 
@@ -112,8 +113,13 @@ class CropPath:
     detected at that time).
 
     In ``"split"`` mode (two-person split screen) ``boxes``/``faces``
-    describe the TOP pane and ``boxes_b``/``faces_b`` the BOTTOM pane;
-    each pane's crop has the output aspect at half height.
+    describe the FIRST pane and ``boxes_b``/``faces_b`` the SECOND
+    pane. ``split_layout`` says how the panes tile the output frame:
+    ``"stacked"`` (first pane on top, second below — portrait output)
+    or ``"side-by-side"`` (first pane left, second right — landscape
+    and square output). Each pane's crop has the pane's own aspect:
+    output aspect at half height when stacked, at half width when
+    side-by-side.
     """
 
     times: list[float] = field(default_factory=list)
@@ -124,8 +130,9 @@ class CropPath:
     qa_passed: bool = True
     needs_review: bool = False  # True when QA failed even after retry
     fallback_fraction: float = 0.0  # share of samples with no face
-    boxes_b: list[FaceBox] = field(default_factory=list)  # split: bottom pane
+    boxes_b: list[FaceBox] = field(default_factory=list)  # split: second pane
     faces_b: list[FaceBox | None] = field(default_factory=list)
+    split_layout: str = "stacked"  # "stacked" | "side-by-side"
 
 
 # ----------------------------------------------------------------------
@@ -624,6 +631,21 @@ def _person_crop_boxes(
     return boxes, frac, frac >= QA_THRESHOLD
 
 
+def split_layout_for_aspect(aspect: tuple[int, int]) -> str:
+    """Split-screen orientation for an output aspect.
+
+    Portrait output stacks the panes (top/bottom). Landscape and
+    square outputs put them side by side: a stacked pane in a 16:9 or
+    1:1 frame is a wide, short strip, and the per-person crop would
+    span the whole source width — in a two-shot it would contain BOTH
+    people shrunk, not one person framed. A side-by-side pane is a
+    tall strip that isolates one person, which is the layout the
+    reference app uses for wide frames.
+    """
+    aw, ah = aspect
+    return "stacked" if ah > aw else "side-by-side"
+
+
 def _split_crop_path(
     pair: tuple[int, int],
     detected: list[list[FaceBox]],
@@ -634,17 +656,28 @@ def _split_crop_path(
 ) -> CropPath | None:
     """Two-up split-screen crop path for a two-person clip, or ``None``.
 
-    Each pane is the output aspect at half height, so one person's crop
-    has aspect ``2*aw : ah``. Returns ``None`` when either pane fails QA
-    even after the strict retry — the caller then keeps the normal
-    single-speaker tracked crop.
+    Stacked (portrait output): each pane is the output aspect at half
+    height, so one person's crop has aspect ``2*aw : ah``.
+    Side-by-side (landscape/square output): each pane is the output
+    aspect at half width, so the crop has aspect ``aw : 2*ah``.
+    Returns ``None`` when either pane fails QA even after the strict
+    retry — the caller then keeps the normal single-speaker tracked
+    crop.
     """
     aw, ah = aspect
-    crop_w = int(frame_h * 2 * aw / ah)
-    crop_h = frame_h
-    if crop_w > frame_w:
-        crop_w = frame_w
-        crop_h = int(frame_w * ah / (2 * aw))
+    layout = split_layout_for_aspect(aspect)
+    if layout == "stacked":
+        crop_w = int(frame_h * 2 * aw / ah)
+        crop_h = frame_h
+        if crop_w > frame_w:
+            crop_w = frame_w
+            crop_h = int(frame_w * ah / (2 * aw))
+    else:
+        crop_h = frame_h
+        crop_w = int(frame_h * aw / (2 * ah))
+        if crop_w > frame_w:
+            crop_w = frame_w
+            crop_h = int(frame_w * 2 * ah / aw)
     crop_w -= crop_w % 2
     crop_h -= crop_h % 2
     series = [_identity_series(detected, identity) for identity in pair]
@@ -669,6 +702,7 @@ def _split_crop_path(
         qa_passed=True,
         needs_review=False,
         fallback_fraction=no_face,
+        split_layout=layout,
     )
 
 

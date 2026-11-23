@@ -60,7 +60,21 @@ def test_window_fits_small_screen(window) -> None:
     window._wizard.go_to_step(1)
     window.resize(1024, 700)
     window.show()
-    QApplication.processEvents()
+    # Let the layout settle before measuring: a single processEvents()
+    # is not always enough on Windows, where the first show of the
+    # wizard page triggers extra layout passes — measuring mid-layout
+    # reads stale panel geometry and fails spuriously.
+    import time
+
+    deadline = time.time() + 5
+    last_size = None
+    while time.time() < deadline:
+        QApplication.processEvents()
+        size = (window.width(), window.height())
+        if size == last_size:
+            break
+        last_size = size
+        time.sleep(0.05)
     try:
         assert window.width() <= 1024
         assert window.height() <= 700

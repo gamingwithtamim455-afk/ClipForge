@@ -271,6 +271,22 @@ class ViralClipsPage(QWidget):
         except ValueError:
             return (9, 16)
 
+    @property
+    def aspect_label(self) -> str:
+        """Selected aspect ratio label, e.g. ``"9:16"``."""
+        return self._aspect.currentText()
+
+    def set_aspect(self, label: str) -> None:
+        """Select a ratio by label (project restore); unknown = 9:16."""
+        index = self._aspect.findText(label)
+        self._aspect.setCurrentIndex(index if index >= 0 else 0)
+
+    def set_quality(self, label: str) -> None:
+        """Select a quality by label (project restore)."""
+        index = self._quality.findText(label)
+        if index >= 0:
+            self._quality.setCurrentIndex(index)
+
     def set_thumbnail(self, path: str) -> None:
         """Show a real video frame as the player's poster image."""
         self._player_widget.set_poster(path)
@@ -358,6 +374,10 @@ class ViralClipsPage(QWidget):
     def reset(self) -> None:
         """Clear all per-project state: no language, no video, no ranges."""
         self._language.setCurrentIndex(-1)  # -> _ready False, readiness_changed
+        # Framing falls back to the defaults; set_project then applies
+        # the opened project's saved ratio/quality on top.
+        self._aspect.setCurrentIndex(0)  # 9:16
+        self._quality.setCurrentIndex(0)  # 1080p
         self.timeline.clear_ranges()
         self.timeline.set_clips([])
         self.timeline.set_duration(0.0)

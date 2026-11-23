@@ -214,8 +214,20 @@ def _filter_graph(
         )
     if crop_path is not None and crop_path.mode == "split":
         # Two-person split screen: two face-tracked crops (instance-
-        # named so one sendcmd file drives each separately), each
-        # scaled to full width x half height and stacked.
+        # named so one sendcmd file drives each separately). Portrait
+        # output stacks the panes (full width x half height each);
+        # landscape/square output puts them side by side (half width
+        # x full height each) — see face_tracking.split_layout_for_aspect.
+        if getattr(crop_path, "split_layout", "stacked") == "side-by-side":
+            pane_w = width // 2
+            return (
+                "[0:v]sendcmd=f={cmds},split=2[sa][sb];"
+                f"[sa]crop@pa=w={crop_w}:h={crop_h}:x=0:y=0,"
+                f"scale={pane_w}:{height}:flags=lanczos,setsar=1[left];"
+                f"[sb]crop@pb=w={crop_w}:h={crop_h}:x=0:y=0,"
+                f"scale={width - pane_w}:{height}:flags=lanczos,setsar=1[right];"
+                f"[left][right]hstack=inputs=2{ass},format=yuv420p[vout]"
+            )
         pane_h = height // 2
         return (
             "[0:v]sendcmd=f={cmds},split=2[sa][sb];"
@@ -253,10 +265,12 @@ def _output_face_rects(
     ``crop_path.faces`` are normalized in the source frame; ``boxes``
     are the crop rectangles in native pixels. A face outside the crop
     maps outside the output frame and is skipped. In split mode each
-    person's face is mapped into its own pane (top / bottom half).
+    person's face is mapped into its own pane (top / bottom half when
+    stacked, left / right half when side-by-side).
     """
     def _map(
-        crops: list, faces: list, pane_y: int, pane_h: int
+        crops: list, faces: list,
+        pane_x: int, pane_y: int, pane_w: int, pane_h: int,
     ) -> list[tuple[float, float, float, float]]:
         mapped: list[tuple[float, float, float, float]] = []
         for crop, face in zip(crops, faces):
@@ -266,22 +280,33 @@ def _output_face_rects(
             fy = face.y * source_h
             fw = face.width * source_w
             fh = face.height * source_h
-            sx = out_w / crop.width
+            sx = pane_w / crop.width
             sy = pane_h / crop.height
-            x = (fx - crop.x) * sx
+            x = pane_x + (fx - crop.x) * sx
             y = pane_y + (fy - crop.y) * sy
-            if x + fw * sx <= 0 or y + fh * sy <= pane_y or x >= out_w \
-                    or y >= pane_y + pane_h:
+            if x + fw * sx <= pane_x or y + fh * sy <= pane_y \
+                    or x >= pane_x + pane_w or y >= pane_y + pane_h:
                 continue
             mapped.append((x, y, fw * sx, fh * sy))
         return mapped
 
     if crop_path.mode == "split" and crop_path.boxes_b:
+        if getattr(crop_path, "split_layout", "stacked") == "side-by-side":
+            pane_w = out_w // 2
+            return _map(
+                crop_path.boxes, crop_path.faces, 0, 0, pane_w, out_h
+            ) + _map(
+                crop_path.boxes_b, crop_path.faces_b,
+                pane_w, 0, out_w - pane_w, out_h,
+            )
         pane_h = out_h // 2
-        return _map(crop_path.boxes, crop_path.faces, 0, pane_h) + _map(
-            crop_path.boxes_b, crop_path.faces_b, pane_h, out_h - pane_h
+        return _map(
+            crop_path.boxes, crop_path.faces, 0, 0, out_w, pane_h
+        ) + _map(
+            crop_path.boxes_b, crop_path.faces_b,
+            0, pane_h, out_w, out_h - pane_h,
         )
-    return _map(crop_path.boxes, crop_path.faces, 0, out_h)
+    return _map(crop_path.boxes, crop_path.faces, 0, 0, out_w, out_h)
 
 
 # ----------------------------------------------------------------------
@@ -515,6 +540,7 @@ def render_clip(
         from .captions import (  # noqa: PLC0415 - local import, same package
             PRESETS,
             CaptionPlacement,
+            caption_block_height,
             caption_zone_clear,
         )
 
@@ -528,10 +554,15 @@ def render_clip(
         if face_rects:
             preset = PRESETS.get(settings.caption_preset, PRESETS["Hormozi"])
             layout = settings.caption_layout or CaptionLayout()
+            if preset.v_pct is not None and layout.v_pct == CaptionLayout().v_pct:
+                # Mirror build_ass: the preset's own anchor applies
+                # until the user moves the captions.
+                layout = replace(layout, v_pct=float(preset.v_pct))
             font_size = layout_font_size(preset, settings.height, layout)
             margin_v = layout_margin_v(settings.height, layout)
             bottom = CaptionPlacement(
-                alignment=2, margin_v=margin_v, font_size=font_size
+                alignment=2, margin_v=margin_v, font_size=font_size,
+                zone_height=caption_block_height(preset, layout, font_size),
             )
             captions_moved = not caption_zone_clear(
                 face_rects, bottom, width=settings.width, height=settings.height

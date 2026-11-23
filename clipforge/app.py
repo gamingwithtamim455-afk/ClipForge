@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QUrl
@@ -33,6 +34,7 @@ from .core.paths import app_data_dir, default_video_dir
 from .core.pipeline import (
     PipelineConfig,
     PipelineResult,
+    aspect_label,
     build_render_jobs,
     deepseek_client_from_settings,
     run_pipeline,
@@ -103,6 +105,16 @@ class MainWindow(QMainWindow):
 
         self._home.refresh()
         self._stack.setCurrentWidget(self._home)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        # Stop the pipeline job before the window goes away: a QThread
+        # destroyed while still running aborts the process on Windows.
+        # (Child jobs on the pages shut down with their owners — see
+        # core.jobs.Job — the pipeline job is the long-running one.)
+        if self._pipeline_job is not None:
+            self._pipeline_job.shutdown()
+            self._pipeline_job = None
+        super().closeEvent(event)
 
     # -- navigation ------------------------------------------------------
     def _show_home(self) -> None:
@@ -203,6 +215,14 @@ class MainWindow(QMainWindow):
             )
             return
         config = self._build_pipeline_config()
+        # Persist the Clip & Framing choices on the project, so
+        # reopening it restores the same ratio/quality (v0.2.2).
+        project = wizard.project
+        if project is not None:
+            project.aspect = aspect_label(config.aspect)
+            project.quality = config.quality
+            project.badge = project.aspect
+            self._store.save()
         deepseek_client = deepseek_client_from_settings(self._settings)
         wizard.set_running(True)
         wizard.set_status("Starting…")
@@ -247,10 +267,21 @@ class MainWindow(QMainWindow):
             video_duration=wizard.video_duration,
         )
         # The Edit preview shows each clip's reframed crop window, not
-        # the raw letterboxed source (v0.2.1 B).
+        # the raw letterboxed source (v0.2.1 B). The crop windows are
+        # computed for the run's OWN ratio (v0.2.2: this call used to
+        # omit the aspect, so 1:1 / 16:9 runs previewed a 9:16 window).
         wizard._edit.set_crop_paths(
             result.crop_paths, result.width, result.height,
+            aspect=result.aspect,
         )
+        # The Edit caption preview renders stills at the run's output
+        # size (scaled down), so captions sit exactly where the render
+        # will put them.
+        if result.render_jobs:
+            job_settings = result.render_jobs[0].settings
+            wizard._edit.set_output_size(
+                job_settings.width, job_settings.height
+            )
         # Default caption preset from Settings > Fonts (user can change
         # it per project in the Edit step before rendering).
         wizard._edit.set_caption_preset(str(self._settings.get("caption_preset")))
@@ -313,6 +344,11 @@ class MainWindow(QMainWindow):
                     crop_paths[new_index] = result.crop_paths.get(old_index)
                     break
         settings = result.render_jobs[0].settings if result.render_jobs else None
+        if settings is not None:
+            # The Edit step's preset picker is live: a style picked
+            # there after the run applies to the rebuilt jobs (before
+            # v0.2.2 the combo was only read once, at Start clipping).
+            settings = replace(settings, caption_preset=edit.caption_preset)
         words_by_index, overlays_by_index, volumes, captions_enabled = (
             edit.edited_overrides()
         )

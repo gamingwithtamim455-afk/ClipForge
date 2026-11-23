@@ -2,7 +2,7 @@
 ; Built by the GitHub Actions Windows job after PyInstaller produces
 ; dist\ClipForge.exe. Requires Inno Setup 6 (choco install innosetup).
 
-#define AppVersion "0.2.1"
+#define AppVersion "0.2.2"
 #define AppName "ClipForge"
 #define ExeName "ClipForge.exe"
 

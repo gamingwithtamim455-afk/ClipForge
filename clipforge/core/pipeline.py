@@ -59,22 +59,63 @@ from .render import (
 from .transcription import Transcript, Word, transcribe_ranges, transcribe_video
 
 __all__ = [
+    "ASPECT_RATIOS",
+    "QUALITY_SIZES",
     "PipelineConfig",
     "PipelineError",
     "PipelineResult",
+    "aspect_label",
     "build_render_jobs",
     "deepseek_client_from_settings",
     "friendly_error",
+    "output_size",
     "render_pipeline_jobs",
     "run_pipeline",
 ]
 
-#: Quality label -> (width, height) output resolution.
+#: Quality label -> (width, height) output resolution at 9:16.
 QUALITY_SIZES: dict[str, tuple[int, int]] = {
     "1080p": (1080, 1920),
     "1440p": (1440, 2560),
     "4K": (2160, 3840),
 }
+
+#: Aspect ratios offered in Clip & Framing — exactly three, as in the
+#: reference app: label -> (width, height) parts.
+ASPECT_RATIOS: dict[str, tuple[int, int]] = {
+    "9:16": (9, 16),
+    "1:1": (1, 1),
+    "16:9": (16, 9),
+}
+
+#: Quality label -> its named pixel size: the frame height for 16:9,
+#: the frame width for 9:16, both for 1:1 (the "1080" in 1080p).
+QUALITY_BASE: dict[str, int] = {"1080p": 1080, "1440p": 1440, "4K": 2160}
+
+
+def output_size(quality: str, aspect: tuple[int, int]) -> tuple[int, int]:
+    """Exact output ``(width, height)`` for a quality label + aspect.
+
+    9:16 -> 1080x1920 / 1440x2560 / 2160x3840; 1:1 -> 1080x1080 /
+    1440x1440 / 2160x2160; 16:9 -> 1920x1080 / 2560x1440 / 3840x2160.
+    Both dimensions are always even (yuv420p).
+    """
+    base = QUALITY_BASE.get(quality, QUALITY_BASE["1080p"])
+    aw, ah = aspect
+    if aw == ah:
+        return base, base
+    if aw < ah:  # portrait: the label names the width
+        return base, int(round(base * ah / aw / 2.0)) * 2
+    # landscape: the label names the height
+    return int(round(base * aw / ah / 2.0)) * 2, base
+
+
+def aspect_label(aspect: tuple[int, int]) -> str:
+    """Display label for an aspect tuple, e.g. ``(9, 16)`` -> ``"9:16"``."""
+    for label, parts in ASPECT_RATIOS.items():
+        if parts == tuple(aspect):
+            return label
+    return f"{aspect[0]}:{aspect[1]}"
 
 #: Clips requested when the user leaves Clips on "Auto".
 DEFAULT_AUTO_CLIPS = 5
@@ -161,10 +202,17 @@ class PipelineConfig:
         return base / safe
 
     def render_settings_for(self) -> RenderSettings:
-        """Output settings for this run (quality + captions + encoder)."""
+        """Output settings for this run (quality + aspect + captions).
+
+        The dimensions come from :func:`output_size`, so the ratio the
+        user picked in Clip & Framing drives the render exactly — the
+        v0.2.0 code read only QUALITY_SIZES (the 9:16 table) here, so a
+        1:1 / 16:9 choice changed the tracking crop but the render still
+        came out 1080x1920 and the tracked crop was stretched into it.
+        """
         if self.render_settings is not None:
             return self.render_settings
-        width, height = QUALITY_SIZES.get(self.quality, QUALITY_SIZES["1080p"])
+        width, height = output_size(self.quality, self.aspect)
         return RenderSettings(
             width=width,
             height=height,
@@ -192,6 +240,7 @@ class PipelineResult:
     fps: float
     transcript: Transcript
     ranges: list[ClipRange]
+    aspect: tuple[int, int] = (9, 16)  # the run's Clip & Framing ratio
     crop_paths: dict[int, CropPath | None] = field(default_factory=dict)
     qa_flags: dict[int, bool] = field(default_factory=dict)  # index -> needs review
     render_jobs: list[RenderJob] = field(default_factory=list)
@@ -543,6 +592,7 @@ def run_pipeline(
         width=info.width,
         height=info.height,
         fps=info.fps,
+        aspect=config.aspect,
         transcript=transcript,
         ranges=ranges,
         crop_paths=crop_paths,

@@ -27,7 +27,7 @@ def dialog(app_window):
 
 def test_preview_cards_all_presets_with_images(dialog) -> None:
     cards = dialog._preview_group.buttons()
-    assert len(cards) == len(PRESETS) == 22
+    assert len(cards) == len(PRESETS) == 40
     names = {b.property("preset_name") for b in cards}
     assert names == set(PRESETS)
     # Every card shows a real rendered preview image.

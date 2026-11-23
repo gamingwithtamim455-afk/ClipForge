@@ -15,6 +15,7 @@ user edits here is exactly what gets rendered.
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -45,7 +47,11 @@ from ..core.edit_ops import (
     split_clip,
     trim_clip,
 )
+from ..core.jobs import run_job
+from ..core.paths import app_data_dir
+from ..core.preview import face_rects_at, render_caption_still
 from ..core.ranges import ClipRange
+from ..core.render import _crop_size
 from ..core.timeparse import format_timecode, parse_timecode
 from ..core.transcription import Word
 from ..i18n import t
@@ -81,6 +87,13 @@ class EditPage(QWidget):
         self._video_source: str = ""
         self._clips: list[EditableClip] = []
         self._crop_previews: dict[int, tuple[float, float, float, float] | None] = {}
+        # Caption preview state (v0.2.2): raw crop paths + frame sizes
+        # for the still renderer, and a token discarding stale jobs.
+        self._raw_crop_paths: dict[int, object] = {}
+        self._source_size: tuple[int, int] = (0, 0)
+        self._output_size: tuple[int, int] = (1080, 1920)
+        self._preview_token = 0
+        self._preview_job = None
         self._video_duration: float = 0.0
         self._selected: int | None = None
         self._syncing_timeline = False
@@ -118,7 +131,25 @@ class EditPage(QWidget):
         preview_title.setProperty("title", True)
         center_layout.addWidget(preview_title)
         self._player_widget = VideoPlayerWidget(self, shrinkable=True)
-        center_layout.addWidget(self._player_widget, 1)
+        center_layout.addWidget(self._player_widget, 3)
+        # Caption preview (v0.2.2): a still of the selected clip with
+        # the current caption line burned in at its real position —
+        # the overview the reference app shows in its player. Rendered
+        # on demand (clip / preset / line change), never per frame.
+        # The label is vertically Ignored: it takes surplus space but
+        # never forces the page (and window) taller on small screens
+        # (no separate title label either — the placeholder text and
+        # the still itself explain the area).
+        self._caption_preview = QLabel(
+            "Caption preview — pick a clip to see its captions "
+            "on the video.", self
+        )
+        self._caption_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._caption_preview.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored
+        )
+        self._caption_preview.setWordWrap(True)
+        center_layout.addWidget(self._caption_preview, 2)
         body.addWidget(center, 1)
 
         # Right: caption preset + clip editor (scrollable).
@@ -133,6 +164,7 @@ class EditPage(QWidget):
         for name, preset in PRESETS.items():
             self._preset.addItem(preset.display_name or name, name)
         self._preset.setEnabled(False)
+        self._preset.currentIndexChanged.connect(self._on_preset_changed)
         right_layout.addWidget(QLabel("Preset", self))
         right_layout.addWidget(self._preset)
         scroll = QScrollArea(self)
@@ -305,6 +337,8 @@ class EditPage(QWidget):
         """
         flags = qa_flags or {}
         self._crop_previews = {}
+        self._raw_crop_paths = {}
+        self._source_size = (0, 0)
         self._video_duration = video_duration
         if video_duration > 0:
             # The timeline validates ranges against the video length — without
@@ -328,6 +362,7 @@ class EditPage(QWidget):
         self._refresh_list()
         self._refresh_editor()
         self._sync_timeline()
+        self._refresh_caption_preview()
 
     def kept_clips(self) -> list[EditableClip]:
         """Clips still checked (approved) in the list, in render order."""
@@ -487,10 +522,17 @@ class EditPage(QWidget):
     def eventFilter(self, watched, event) -> bool:
         # Focusing a line's text field selects that row, so the word
         # combo (delete word) follows the line being edited.
+        # Defensive like HomePage.eventFilter: an exception escaping a Qt
+        # override aborts the process on Windows, and a focus event can
+        # still arrive while the page is being torn down.
         if event.type() == QEvent.Type.FocusIn:
             row = watched.property("line_row")
-            if row is not None:
-                self._lines.setCurrentRow(int(row))
+            lines = getattr(self, "_lines", None)
+            if row is not None and lines is not None:
+                try:
+                    lines.setCurrentRow(int(row))
+                except RuntimeError:
+                    pass  # list widget already deleted during teardown
         return super().eventFilter(watched, event)
 
     def _refresh_word_combo(self) -> None:
@@ -587,6 +629,12 @@ class EditPage(QWidget):
         else:
             self._player_widget.clear()
 
+    def set_output_size(self, width: int, height: int) -> None:
+        """Output dimensions of the current run (caption preview)."""
+        if width > 0 and height > 0:
+            self._output_size = (width, height)
+            self._refresh_caption_preview()
+
     def set_crop_paths(
         self,
         crop_paths: dict,
@@ -599,12 +647,15 @@ class EditPage(QWidget):
 
         ``crop_paths`` maps clip index -> CropPath (or None). For a
         tracked path the MEDIAN crop box (normalised to 0..1) becomes
-        the preview window, so the Edit player shows the reframed 9:16
+        the preview window, so the Edit player shows the reframed crop
         result instead of the raw letterboxed source (v0.2.1 B). Split
         paths keep the full frame (two panes); a missing path previews
-        the centred fill crop the renderer will use.
+        the centred fill crop the renderer will use. The raw paths and
+        the source size are kept for the caption preview still.
         """
         self._crop_previews = {}
+        self._raw_crop_paths = dict(crop_paths) if crop_paths else {}
+        self._source_size = (source_w, source_h)
         if source_w <= 0 or source_h <= 0:
             return
         aw, ah = aspect
@@ -636,6 +687,145 @@ class EditPage(QWidget):
             self._player_widget.set_crop_preview(
                 self._crop_previews.get(self._selected)
             )
+        self._refresh_caption_preview()
+
+    # -- caption preview ----------------------------------------------------
+
+    def _on_preset_changed(self, _index: int) -> None:
+        """A style picked in the Edit step: preview it, render with it.
+
+        Before v0.2.2 this combo was only read once (at Start
+        clipping), so changing it here changed nothing at all.
+        """
+        self._refresh_caption_preview()
+        self.clips_changed.emit()
+
+    def _preview_dims(self) -> tuple[int, int]:
+        """Still size: the run's output size scaled to <= 432 px wide.
+
+        The ASS PlayRes scales with the frame, so the caption's
+        position and size in the still are proportionally exact.
+        """
+        w, h = self._output_size
+        scale = min(1.0, 432.0 / max(w, 1))
+        return (
+            max(2, int(w * scale) // 2 * 2),
+            max(2, int(h * scale) // 2 * 2),
+        )
+
+    def _preview_crop_rect(
+        self,
+    ) -> tuple[float, float, float, float] | None:
+        """The selected clip's crop window in native source pixels."""
+        index = self._selected or 0
+        source_w, source_h = self._source_size
+        if source_w <= 0 or source_h <= 0:
+            return None
+        path = self._raw_crop_paths.get(index)
+        if path is not None and getattr(path, "boxes", None):
+            box = path.boxes[len(path.boxes) // 2]
+            return (box.x, box.y, box.width, box.height)
+        # No tracked path: the renderer's centred fill crop for the
+        # output aspect.
+        from math import gcd
+
+        divisor = gcd(self._output_size[0], self._output_size[1]) or 1
+        aspect = (
+            self._output_size[0] // divisor,
+            self._output_size[1] // divisor,
+        )
+        crop_w, crop_h = _crop_size(source_w, source_h, aspect=aspect)
+        return (
+            (source_w - crop_w) / 2,
+            (source_h - crop_h) / 2,
+            float(crop_w),
+            float(crop_h),
+        )
+
+    def _refresh_caption_preview(self) -> None:
+        """Re-render the caption preview still for the current state.
+
+        On demand only — clip selection, preset change, caption-line
+        selection or edit — in a background job; a token discards
+        stale results when the user clicks faster than ffmpeg runs.
+        """
+        self._preview_token += 1
+        token = self._preview_token
+        clip = self._selected_clip()
+        label = getattr(self, "_caption_preview", None)
+        if label is None:
+            return
+        if clip is None or not self._video_source:
+            label.setPixmap(QPixmap())
+            label.setText("Pick a clip to preview its captions.")
+            return
+        if not clip.captions_enabled:
+            label.setPixmap(QPixmap())
+            label.setText("Captions are off for this clip.")
+            return
+        words = clip_words_relative(clip)
+        if not words:
+            label.setPixmap(QPixmap())
+            label.setText("No captions in this clip.")
+            return
+        spans = line_spans(words)
+        row = self._lines.currentRow()
+        line_start = (
+            spans[row][0] if 0 <= row < len(spans) else spans[0][0]
+        )
+        at_time = clip.start + line_start + 0.1
+        width, height = self._preview_dims()
+        crop_rect = self._preview_crop_rect()
+        face_rects = None
+        path = self._raw_crop_paths.get(self._selected or 0)
+        source_w, source_h = self._source_size
+        if path is not None and source_w > 0:
+            rects = face_rects_at(
+                path, clip_time=line_start + 0.1,
+                source_w=source_w, source_h=source_h,
+                out_w=width, out_h=height,
+            )
+            face_rects = rects or None
+        preset = self.caption_preset
+        video = self._video_source
+        clip_start = clip.start
+        out = app_data_dir() / "previews" / f"caption-{token}.png"
+
+        def _work(_ctx) -> str:
+            return str(
+                render_caption_still(
+                    video, at_time=at_time, clip_start=clip_start,
+                    crop_rect=crop_rect, words=words,
+                    preset_name=preset, width=width, height=height,
+                    face_rects=face_rects, out_path=out,
+                )
+            )
+
+        def _done(result: object, _token: int = token) -> None:
+            if _token != self._preview_token:
+                return
+            pixmap = QPixmap(str(result))
+            if pixmap.isNull():
+                self._caption_preview.setText("Caption preview unavailable.")
+                return
+            self._caption_preview.setText("")
+            self._caption_preview.setPixmap(
+                pixmap.scaled(
+                    max(2, self._caption_preview.width()),
+                    max(2, self._caption_preview.height()),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+
+        def _failed(_error: str, _token: int = token) -> None:
+            if _token == self._preview_token:
+                self._caption_preview.setPixmap(QPixmap())
+                self._caption_preview.setText("Caption preview unavailable.")
+
+        self._preview_job = run_job(
+            _work, on_finished=_done, on_failed=_failed, parent=self
+        )
 
     def _on_clip_selected(self, row: int) -> None:
         if 0 <= row < len(self._clips):
@@ -651,6 +841,7 @@ class EditPage(QWidget):
             if getattr(self, "_video_source", ""):
                 # Preview exactly this clip's range of the source.
                 self._player_widget.set_play_range(clip.start, clip.end)
+            self._refresh_caption_preview()
 
     def _on_apply_trim(self) -> None:
         clip = self._selected_clip()
@@ -751,6 +942,7 @@ class EditPage(QWidget):
             return
         clip.captions_enabled = state == Qt.CheckState.Checked.value
         self._refresh_lines()
+        self._refresh_caption_preview()
         self.clips_changed.emit()
 
     def _on_line_edited(self, item: QListWidgetItem) -> None:
@@ -769,10 +961,13 @@ class EditPage(QWidget):
             return
         self._replace_selected(edited)
         self._refresh_lines()
+        self._refresh_caption_preview()
         self.clips_changed.emit()
 
     def _on_line_selected(self, row: int) -> None:
         self._refresh_word_combo()
+        if row >= 0:
+            self._refresh_caption_preview()
 
     def _on_delete_line(self) -> None:
         row = self._lines.currentRow()

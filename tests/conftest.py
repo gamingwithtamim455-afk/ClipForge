@@ -5,6 +5,8 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import time
+
 import pytest
 
 
@@ -15,10 +17,30 @@ def app_window():
     Qt allows exactly one QApplication singleton per process, so UI test
     modules must share it instead of each creating their own.
     """
+    from PySide6.QtCore import QThread
+
     from clipforge.app import create_app
 
     app, win = create_app()
     yield win
+    win.close()
+    # Background jobs (thumbnail grabs, pipeline runs) live on QThreads
+    # owned by the window's pages. If the process exits while one is
+    # still running, Qt destroys the thread mid-run and aborts the
+    # process on Windows (0xC0000409) — which also eats pytest's summary
+    # output, hiding which tests failed. Wait for every child thread to
+    # stop before quitting.
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        app.processEvents()
+        running = [t for t in win.findChildren(QThread) if t.isRunning()]
+        if not running:
+            break
+        for thread in running:
+            thread.quit()
+        time.sleep(0.05)
+    win.deleteLater()
+    app.processEvents()
     app.quit()
 
 
