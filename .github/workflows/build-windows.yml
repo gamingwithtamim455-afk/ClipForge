@@ -14,6 +14,8 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
+    permissions:
+      contents: write
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
@@ -79,3 +81,18 @@ jobs:
             dist/ClipForge.exe
             installer/Output/ClipForge-Setup.exe
           if-no-files-found: error
+
+      - name: Publish GitHub Release for this version (if new)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $init = Get-Content clipforge/__init__.py -Raw
+          if ($init -notmatch '__version__\s*=\s*"([^"]+)"') { Write-Output "::error::version not found in clipforge/__init__.py"; exit 1 }
+          $ver = "v" + $Matches[1]
+          $existing = gh release list --json tagName | ConvertFrom-Json
+          if ($existing.tagName -contains $ver) { Write-Output "Release $ver already exists - skipping."; exit 0 }
+          $setup = "installer/Output/ClipForge-Setup.exe"
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+          "$hash  ClipForge-Setup.exe" | Out-File -Encoding ascii "ClipForge-Setup.exe.sha256"
+          gh release create $ver --title "ClipForge $ver" --notes "Download ClipForge-Setup.exe and run it to install. Future updates arrive inside the app via Settings > Updates." $setup "ClipForge-Setup.exe.sha256"
