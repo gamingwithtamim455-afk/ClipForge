@@ -109,7 +109,10 @@ class EditPage(QWidget):
         # Left: clip list.
         left = QFrame(self)
         left.setProperty("panel", True)
-        left.setFixedWidth(215)
+        # Preferred 215, compressible to 170 on small / scaled screens
+        # (hard fixed panel widths set the window's minimum width).
+        left.setMinimumWidth(170)
+        left.setMaximumWidth(215)
         left_layout = QVBoxLayout(left)
         title = QLabel("Clips", self)
         title.setProperty("title", True)
@@ -155,7 +158,9 @@ class EditPage(QWidget):
         # Right: caption preset + clip editor (scrollable).
         right = QFrame(self)
         right.setProperty("panel", True)
-        right.setFixedWidth(280)
+        # Preferred 280, compressible to 230 on small / scaled screens.
+        right.setMinimumWidth(230)
+        right.setMaximumWidth(280)
         right_layout = QVBoxLayout(right)
         caption_title = QLabel("Captions", self)
         caption_title.setProperty("title", True)

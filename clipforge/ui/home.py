@@ -142,7 +142,8 @@ class HomePage(QWidget):
 
         self._search = QLineEdit(self)
         self._search.setPlaceholderText(t("home.search_placeholder"))
-        self._search.setFixedWidth(220)
+        self._search.setMinimumWidth(160)
+        self._search.setMaximumWidth(220)
         self._search.textChanged.connect(self.refresh)
         header.addWidget(self._search)
 

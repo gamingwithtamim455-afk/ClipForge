@@ -258,29 +258,16 @@ class TimelineWidget(QFrame):
         layout.setContentsMargins(10, 4, 10, 4)
         layout.setSpacing(5)
 
+        # Two header rows: actions on the first, zoom controls on the
+        # second (right-aligned, directly above the ruler). A single
+        # row of title + zoom + Add + Delete needed ~480 px, which —
+        # with the side panels — set the main window's minimum width
+        # above what a 1024 px-wide (or 150%-scaled) screen offers.
         header = QHBoxLayout()
         title = QLabel(t("timeline.title"), self)
         title.setProperty("title", True)
         header.addWidget(title)
         header.addStretch(1)
-        zoom_out = QPushButton("−", self)
-        zoom_out.setFixedSize(34, 34)
-        zoom_out.setStyleSheet("font-size: 15px; font-weight: 600;")
-        zoom_out.setToolTip("Zoom out")
-        zoom_out.clicked.connect(self._zoom_out)
-        header.addWidget(zoom_out)
-        self._zoom = QSlider(Qt.Orientation.Horizontal, self)
-        self._zoom.setRange(1, 100)
-        self._zoom.setValue(20)
-        self._zoom.setFixedWidth(90)
-        self._zoom.valueChanged.connect(self._apply_zoom)
-        header.addWidget(self._zoom)
-        zoom_in = QPushButton("+", self)
-        zoom_in.setFixedSize(34, 34)
-        zoom_in.setStyleSheet("font-size: 15px; font-weight: 600;")
-        zoom_in.setToolTip("Zoom in")
-        zoom_in.clicked.connect(self._zoom_in)
-        header.addWidget(zoom_in)
         # Labelled with visible text (not a bare "+" glyph): adding a
         # manual range is the primary timeline action, and users could
         # not find the old 26 px flat icon button.
@@ -298,6 +285,28 @@ class TimelineWidget(QFrame):
         header.addWidget(delete_btn)
         self._delete_btn = delete_btn
         layout.addLayout(header)
+
+        zoom_row = QHBoxLayout()
+        zoom_row.addStretch(1)
+        zoom_out = QPushButton("−", self)
+        zoom_out.setFixedSize(34, 34)
+        zoom_out.setStyleSheet("font-size: 15px; font-weight: 600;")
+        zoom_out.setToolTip("Zoom out")
+        zoom_out.clicked.connect(self._zoom_out)
+        zoom_row.addWidget(zoom_out)
+        self._zoom = QSlider(Qt.Orientation.Horizontal, self)
+        self._zoom.setRange(1, 100)
+        self._zoom.setValue(20)
+        self._zoom.setFixedWidth(90)
+        self._zoom.valueChanged.connect(self._apply_zoom)
+        zoom_row.addWidget(self._zoom)
+        zoom_in = QPushButton("+", self)
+        zoom_in.setFixedSize(34, 34)
+        zoom_in.setStyleSheet("font-size: 15px; font-weight: 600;")
+        zoom_in.setToolTip("Zoom in")
+        zoom_in.clicked.connect(self._zoom_in)
+        zoom_row.addWidget(zoom_in)
+        layout.addLayout(zoom_row)
 
         self._ruler = _Ruler(self)
         layout.addWidget(self._ruler)

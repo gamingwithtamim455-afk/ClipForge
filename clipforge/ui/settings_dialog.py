@@ -47,11 +47,11 @@ from ..core.captions import (
     CaptionLayout,
     FontError,
     GradientConfig,
+    ensure_preview_card,
     install_custom_font,
     list_caption_fonts,
     list_installed_fonts,
-    preview_slug,
-    previews_dir,
+    preview_card_path,
 )
 from ..core.jobs import Job, run_job
 from ..core.keys import (
@@ -616,6 +616,7 @@ class SettingsDialog(QDialog):
         self._preview_group.buttonClicked.connect(self._on_preview_picked)
         grid = QGridLayout()
         grid.setSpacing(6)
+        missing_cards: list[str] = []
         for i, (name, preset) in enumerate(PRESETS.items()):
             button = QToolButton(self)
             button.setCheckable(True)
@@ -624,20 +625,19 @@ class SettingsDialog(QDialog):
             )
             button.setText(preset.display_name or name)
             button.setProperty("preset_name", name)
-            pixmap_path = previews_dir() / f"{preview_slug(name)}.png"
-            if pixmap_path.exists():
-                pixmap = QPixmap(str(pixmap_path))
-                button.setIcon(QIcon(pixmap))
-                button.setIconSize(
-                    pixmap.size().scaled(
-                        96, 171, Qt.AspectRatioMode.KeepAspectRatio
-                    )
-                )
+            if not self._set_card_icon(button, name):
+                missing_cards.append(name)
             button.setMinimumSize(104, 196)
             self._preview_group.addButton(button)
             grid.addWidget(button, i // 4, i % 4)
         card.addLayout(grid)
         self._sync_preview_checked()
+        if missing_cards:
+            # Not every preset's card PNG is bundled with the app, so
+            # render the missing ones in the background (one job, each
+            # finished card's icon pops in as it lands) instead of
+            # leaving those presets as text-only buttons.
+            self._generate_missing_cards(missing_cards)
 
         # Gradient editor — up to 5 stops, each colour + position
         # changeable, Solid/Gradient toggle + direction. Applies to
@@ -922,6 +922,58 @@ class SettingsDialog(QDialog):
         self._settings.set("caption_keyword_scale", float(value))
 
     # -- Fonts tab: style previews ---------------------------------------
+    def _set_card_icon(self, button, name: str) -> bool:
+        """Load a preset's preview card onto its button, if one exists.
+
+        Looks the card up through preview_card_path (bundled first,
+        then the on-demand generated copy). Returns False when no card
+        exists yet — the caller then schedules generation.
+        """
+        path = preview_card_path(name)
+        if path is None:
+            return False
+        pixmap = QPixmap(str(path))
+        if pixmap.isNull():
+            return False
+        button.setIcon(QIcon(pixmap))
+        button.setIconSize(
+            pixmap.size().scaled(
+                96, 171, Qt.AspectRatioMode.KeepAspectRatio
+            )
+        )
+        return True
+
+    def _generate_missing_cards(self, missing: list[str]) -> None:
+        """Render missing preview cards in one background job.
+
+        The dialog stays responsive; each finished card's icon is set
+        as soon as its render lands (progress carries the preset name).
+        A card that fails to render simply stays text-only.
+        """
+        buttons = {
+            b.property("preset_name"): b for b in self._preview_group.buttons()
+        }
+
+        def _work(ctx):
+            for i, name in enumerate(missing):
+                if ctx.cancelled:
+                    break
+                try:
+                    ensure_preview_card(name)
+                except Exception:  # noqa: BLE001 — card stays text-only
+                    continue
+                ctx.report(i, name)
+            return None
+
+        def _progress(_percent: int, name: str) -> None:
+            button = buttons.get(name)
+            if button is not None:
+                self._set_card_icon(button, name)
+
+        self._card_job = run_job(
+            _work, on_progress=_progress, parent=self
+        )
+
     def _sync_preview_checked(self) -> None:
         """Check the preview card matching the current preset."""
         group = getattr(self, "_preview_group", None)

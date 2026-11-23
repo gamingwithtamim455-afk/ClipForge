@@ -16,9 +16,11 @@ from pathlib import Path
 __all__ = [
     "FFmpegError",
     "ProbeResult",
+    "ass_filter",
     "bundled_ffmpeg_dir",
     "encoder_is_usable",
     "encoder_quality_args",
+    "escape_filter_arg",
     "extract_audio",
     "find_ffmpeg",
     "find_ffprobe",
@@ -70,6 +72,33 @@ def _is_windows() -> bool:
     import sys
 
     return sys.platform.startswith("win")
+
+
+def escape_filter_arg(value: str) -> str:
+    """Quote a path argument for a filtergraph.
+
+    ffmpeg's filtergraph parser cannot take a raw Windows path: a
+    backslash is an escape character there, and an unescaped drive
+    colon ends the option value early ("No option name near ...").
+    Forward slashes work on Windows too, so normalise to them,
+    escape the drive colon, and single-quote the whole value.
+
+    This is the single source of truth for filter-argument escaping:
+    the render graph, the caption-still preview, the preview-card
+    generator and the tests all build their ``ass=`` arguments
+    through here (a hand-rolled unescaped ``ass=C:\\...`` in a test
+    helper is what failed on the Windows CI runner with EINVAL).
+    """
+    escaped = value.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+    return "'" + escaped + "'"
+
+
+def ass_filter(ass_path: str | Path, fontsdir: str | Path) -> str:
+    """The ``ass=<file>:fontsdir=<dir>`` filter string, escaped."""
+    return (
+        f"ass={escape_filter_arg(str(ass_path))}"
+        f":fontsdir={escape_filter_arg(str(fontsdir))}"
+    )
 
 
 def probe(path: str) -> ProbeResult:

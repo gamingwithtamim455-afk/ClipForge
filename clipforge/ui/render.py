@@ -71,7 +71,9 @@ class RenderPage(QWidget):
         # Left: output summary.
         summary = QFrame(self)
         summary.setProperty("panel", True)
-        summary.setFixedWidth(260)
+        # Preferred 260, compressible to 216 on small / scaled screens.
+        summary.setMinimumWidth(216)
+        summary.setMaximumWidth(260)
         summary_layout = QVBoxLayout(summary)
         title = QLabel("Output", self)
         title.setProperty("title", True)
@@ -128,7 +130,9 @@ class RenderPage(QWidget):
         # Right: render action.
         actions = QFrame(self)
         actions.setProperty("panel", True)
-        actions.setFixedWidth(205)
+        # Preferred 205, compressible to 168 on small / scaled screens.
+        actions.setMinimumWidth(168)
+        actions.setMaximumWidth(205)
         actions_layout = QVBoxLayout(actions)
         self._render_btn = QPushButton(t("render.start"), self)
         self._render_btn.setProperty("primary", True)

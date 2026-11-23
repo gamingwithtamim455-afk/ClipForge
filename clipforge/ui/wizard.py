@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -147,6 +148,13 @@ class WizardPage(QWidget):
 
         self._project_label = QLabel("", self)
         self._project_label.setStyleSheet("font-weight: 600;")
+        # A long project name must not widen the window: cap the label
+        # and let Qt elide the overflow (full name stays in the tooltip
+        # via set_project).
+        self._project_label.setMaximumWidth(240)
+        self._project_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         header.addWidget(self._project_label)
         change = QPushButton(t("wizard.change"), self)
         change.setMinimumHeight(30)
@@ -163,6 +171,10 @@ class WizardPage(QWidget):
         footer.setContentsMargins(12, 8, 12, 10)
         footer.setSpacing(6)
         self._status = QLabel("", self)
+        # Wrap long status lines instead of widening the window: an
+        # unwrapped label's minimum width is its full text (the
+        # select-language hint is a full sentence).
+        self._status.setWordWrap(True)
         footer.addWidget(self._status)
         buttons = QHBoxLayout()
         back = QPushButton(f"‹ {t('wizard.back')}", self)
@@ -212,6 +224,7 @@ class WizardPage(QWidget):
         self.reset()
         self._project = project
         self._project_label.setText(project.name)
+        self._project_label.setToolTip(project.name)
         # Restore the project's saved Clip & Framing choices (reset()
         # put the defaults back; the project's own ratio/quality win).
         self._viral.set_aspect(project.aspect or "9:16")

@@ -189,7 +189,11 @@ class VideoPlayerWidget(QWidget):
         self._video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
         self._crop_preview: tuple[float, float, float, float] | None = None
         if shrinkable:
-            min_w, min_h = video_width * 2 // 3, video_height * 2 // 3
+            # 5/9 of the full size (270x480 -> 150x266): the old 2/3
+            # floor (180x320) plus the transport row made the player
+            # panel a binding constraint for the main window's minimum
+            # height on 700 px-tall (150%-scaled) screens.
+            min_w, min_h = video_width * 5 // 9, video_height * 5 // 9
             for area in (self._poster, self._video_container):
                 area.setMinimumSize(min_w, min_h)
                 area.setSizePolicy(

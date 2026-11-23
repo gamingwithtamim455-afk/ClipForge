@@ -63,10 +63,12 @@ __all__ = [
     "caption_block_height",
     "caption_zone_clear",
     "choose_caption_placement",
+    "ensure_preview_card",
     "font_family_for_language",
     "font_family_from_file",
     "font_path_for_language",
     "fonts_dir",
+    "generated_previews_dir",
     "group_words",
     "hex_to_ass_color",
     "inspect_font_file",
@@ -78,6 +80,8 @@ __all__ = [
     "list_caption_fonts",
     "list_installed_fonts",
     "pick_keyword",
+    "preview_card_path",
+    "render_preview_card",
     "resolve_custom_font",
     "user_fonts_dir",
     "write_ass_file",
@@ -169,6 +173,90 @@ def preview_slug(name: str) -> str:
 def previews_dir() -> Path:
     """Directory holding the bundled style-preview images."""
     return Path(__file__).resolve().parent.parent / "assets" / "previews"
+
+
+def generated_previews_dir() -> Path:
+    """App-data directory holding preview cards generated on demand."""
+    return app_data_dir() / "previews"
+
+
+def preview_card_path(name: str) -> Path | None:
+    """Where a preset's preview card can be loaded from, if anywhere.
+
+    Bundled cards ship with the app and are used as-is. Cards for
+    presets whose PNG is not bundled are generated on demand into the
+    app-data dir instead (see :func:`ensure_preview_card`) — the
+    bundled dir is not writable in a frozen install, and binary card
+    images cannot be committed through every distribution channel.
+    """
+    slug = preview_slug(name)
+    bundled = previews_dir() / f"{slug}.png"
+    if bundled.exists():
+        return bundled
+    generated = generated_previews_dir() / f"{slug}.png"
+    if generated.exists():
+        return generated
+    return None
+
+
+#: Sample line + geometry for preview cards — the same render the
+#: committed cards were produced with (tools/render_preset_previews.py
+#: now calls render_preview_card below).
+_PREVIEW_SAMPLE = ["a", "quick", "brown", "fox"]
+_PREVIEW_W, _PREVIEW_H = 540, 960
+_PREVIEW_FRAME_AT = 0.6  # inside "quick" (0.4-0.8 s): every preset shows text
+
+
+def render_preview_card(name: str, out: Path) -> None:
+    """Render one preset's preview frame to ``out`` (PNG).
+
+    Uses the same build_ass + libass path the Render step burns with,
+    so the card shows exactly what the preset puts on a real clip.
+    """
+    import subprocess
+    import tempfile
+
+    from .ffmpeg import ass_filter, find_ffmpeg
+
+    words = [
+        Word(text, i * 0.4, (i + 1) * 0.4)
+        for i, text in enumerate(_PREVIEW_SAMPLE)
+    ]
+    ass_text = build_ass(
+        words, preset_name=name, width=_PREVIEW_W, height=_PREVIEW_H
+    )
+    ffmpeg = find_ffmpeg()
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg not found")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        ass_path = Path(tmp) / "preview.ass"
+        ass_path.write_text(ass_text, encoding="utf-8")
+        subprocess.run(
+            [
+                ffmpeg, "-y", "-v", "error",
+                "-f", "lavfi", "-i",
+                f"color=c=black:s={_PREVIEW_W}x{_PREVIEW_H}:r=30:d=2",
+                "-vf", ass_filter(ass_path, fonts_dir()),
+                "-ss", str(_PREVIEW_FRAME_AT), "-frames:v", "1", str(out),
+            ],
+            check=True,
+        )
+
+
+def ensure_preview_card(name: str) -> Path:
+    """Return the preset's preview card path, generating it if missing.
+
+    A bundled card is returned as-is (never regenerated); a missing
+    card is rendered once into the app-data previews dir and reused
+    on every later call.
+    """
+    existing = preview_card_path(name)
+    if existing is not None:
+        return existing
+    out = generated_previews_dir() / f"{preview_slug(name)}.png"
+    render_preview_card(name, out)
+    return out
 
 
 def font_path_for_language(language: str) -> Path:

@@ -29,16 +29,10 @@ from .captions import (
     resolve_custom_font,
 )
 from .face_tracking import CropPath
-from .ffmpeg import find_ffmpeg, run_ffmpeg
+from .ffmpeg import escape_filter_arg as _escape_filter_arg, find_ffmpeg, run_ffmpeg
 from .transcription import Word
 
 __all__ = ["render_caption_still"]
-
-
-def _escape_filter_arg(value: str) -> str:
-    """Quote a path argument for a filtergraph (mirrors render.py)."""
-    escaped = value.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-    return "'" + escaped + "'"
 
 
 def render_caption_still(

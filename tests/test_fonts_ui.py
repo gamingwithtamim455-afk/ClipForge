@@ -2,12 +2,14 @@
 editor, layout controls. Each test restores the settings it changes."""
 
 import pytest
+from PySide6.QtGui import QPixmap
 
 from clipforge.core.captions import (
     PRESETS,
     CaptionLayout,
     GradientConfig,
-    preview_slug,
+    ensure_preview_card,
+    preview_card_path,
     previews_dir,
 )
 from clipforge.ui.settings_dialog import SettingsDialog
@@ -30,11 +32,23 @@ def test_preview_cards_all_presets_with_images(dialog) -> None:
     assert len(cards) == len(PRESETS) == 40
     names = {b.property("preset_name") for b in cards}
     assert names == set(PRESETS)
-    # Every card shows a real rendered preview image.
+    # Every card shows a real rendered preview image. A preset whose
+    # PNG is not bundled gets its card generated on demand by the app
+    # itself — the dialog runs ensure_preview_card in a background job
+    # and sets each icon as it lands; drive that same ensure path here
+    # (synchronously), then refresh the buttons the same way.
+    for name in PRESETS:
+        path = ensure_preview_card(name)
+        assert path.exists(), f"missing preview image: {name}"
     for button in cards:
-        assert not button.icon().isNull(), button.property("preset_name")
-        path = previews_dir() / f"{preview_slug(button.property('preset_name'))}.png"
-        assert path.exists(), f"missing preview image: {path}"
+        name = button.property("preset_name")
+        assert dialog._set_card_icon(button, name), name
+        assert not button.icon().isNull(), name
+        card_path = preview_card_path(name)
+        assert card_path is not None
+        assert not QPixmap(str(card_path)).isNull(), name
+    # A bundled card is used as-is, never regenerated into app data.
+    assert preview_card_path("Hormozi") == previews_dir() / "hormozi.png"
     # The current preset's card is checked.
     checked = [b for b in cards if b.isChecked()]
     assert len(checked) == 1

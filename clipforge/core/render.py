@@ -47,6 +47,7 @@ from .face_tracking import CropPath, track_faces
 from .ffmpeg import (
     FFmpegError,
     encoder_quality_args,
+    escape_filter_arg as _escape_filter_arg,
     find_ffmpeg,
     probe,
     run_ffmpeg,
@@ -135,19 +136,6 @@ class RenderJob:
 # ----------------------------------------------------------------------
 # Filter-graph helpers
 # ----------------------------------------------------------------------
-
-def _escape_filter_arg(value: str) -> str:
-    """Quote a path argument for a filtergraph.
-
-    ffmpeg's filtergraph parser cannot take a raw Windows path: a
-    backslash is an escape character there, and an unescaped drive
-    colon ends the option value early ("No option name near ...").
-    Forward slashes work on Windows too, so normalise to them,
-    escape the drive colon, and single-quote the whole value.
-    """
-    escaped = value.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-    return "'" + escaped + "'"
-
 
 def _sendcmd_lines(
     times: list[float], boxes: list, target: str

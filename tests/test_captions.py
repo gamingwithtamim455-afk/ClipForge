@@ -928,7 +928,7 @@ def test_every_preset_renders_a_frame_with_captions_inside(tmp_path) -> None:
     construction — this proves no preset errors or renders blank)."""
     import subprocess
 
-    from clipforge.core.ffmpeg import find_ffmpeg, probe
+    from clipforge.core.ffmpeg import ass_filter, find_ffmpeg, probe
 
     ffmpeg = find_ffmpeg()
     assert ffmpeg
@@ -943,7 +943,7 @@ def test_every_preset_renders_a_frame_with_captions_inside(tmp_path) -> None:
             [
                 ffmpeg, "-y", "-v", "error",
                 "-f", "lavfi", "-i", "color=c=black:s=360x640:r=30:d=2",
-                "-vf", f"ass={ass_path}:fontsdir={fonts_dir()}",
+                "-vf", ass_filter(ass_path, fonts_dir()),
                 "-ss", "0.6", "-frames:v", "1", str(out),
             ],
             check=True,
