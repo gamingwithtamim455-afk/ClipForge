@@ -171,8 +171,14 @@ class HomePage(QWidget):
         return scroll
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt override
+        # _scroll is assigned while the page is being built; an event can
+        # reach this filter before that on some platforms (Windows CI hit
+        # an AttributeError here, which aborts the Qt event loop), so the
+        # lookup must be defensive — the same pattern _column_count uses.
+        scroll = getattr(self, "_scroll", None)
         if (
-            watched is self._scroll.viewport()
+            scroll is not None
+            and watched is scroll.viewport()
             and event.type() == QEvent.Type.Resize
             and self._cards
             and self._column_count() != self._columns
