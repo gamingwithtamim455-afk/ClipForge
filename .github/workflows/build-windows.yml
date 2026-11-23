@@ -36,7 +36,26 @@ jobs:
         run: python tools/download_ffmpeg.py --platform win
 
       - name: Run tests (offscreen)
-        run: pytest tests/ -q
+        # The job log needs sign-in to read, so on failure the failing
+        # test names (or the startup error) are also emitted as
+        # ::error:: annotations, visible on the public run page.
+        # python -m pytest (not bare pytest) so the command cannot fail
+        # on PATH lookup.
+        run: |
+          python -m pytest --version
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error::python -m pytest --version failed, exit code $LASTEXITCODE"; exit $LASTEXITCODE }
+          python -m pytest tests/ -q --tb=line -rf 2>&1 | Tee-Object -FilePath pytest-output.txt
+          if ($LASTEXITCODE -ne 0) {
+            $code = $LASTEXITCODE
+            $fails = Select-String -Path pytest-output.txt -Pattern '^FAILED ' | ForEach-Object { $_.Line }
+            if ($fails) {
+              foreach ($f in $fails) { Write-Output "::error::$f" }
+            } else {
+              Write-Output "::error::pytest exited with code $code and no FAILED lines in output (possible crash or collection error)"
+              Get-Content pytest-output.txt -Tail 10 | ForEach-Object { Write-Output "::error::$_" }
+            }
+            exit $code
+          }
 
       - name: Smoke-test the app (offscreen)
         run: |
