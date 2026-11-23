@@ -61,17 +61,36 @@ def model_for_language(language: str) -> str:
     return str(presets.get(language, DEFAULT_MODEL))
 
 
-def build_listen_params(language: str) -> dict:
+#: Settings labels -> Deepgram model IDs (the Transcription tab's Model
+#: dropdown, mirroring the reference app's Nova-3 / Nova-2 / Enhanced).
+MODEL_LABELS: dict[str, str] = {
+    "Nova-3": "nova-3",
+    "Nova-2": "nova-2",
+    "Enhanced": "enhanced",
+}
+
+
+def model_id_for_label(label: str) -> str:
+    """Map a Settings model label to a Deepgram model ID (nova-3 default)."""
+    return MODEL_LABELS.get(label, DEFAULT_MODEL)
+
+
+def build_listen_params(language: str, model: str | None = None) -> dict:
     """Query parameters for ``POST /v1/listen`` for an app language code.
+
+    ``model`` (a model ID such as ``nova-2``) overrides the per-language
+    preset model — it is the user's Settings > Transcription choice.
 
     >>> build_listen_params("bn")["language"]
     'bn'
     >>> build_listen_params("auto")
     {'model': 'nova-3', 'detect_language': 'true', 'smart_format': 'true', 'punctuate': 'true', 'utterances': 'true'}
+    >>> build_listen_params("en", model="nova-2")["model"]
+    'nova-2'
     """
     presets = load_presets()["deepgram"]
     params: dict[str, str] = {
-        "model": model_for_language(language),
+        "model": model or model_for_language(language),
         "smart_format": "true" if presets["params"]["smart_format"] else "false",
         "punctuate": "true" if presets["params"]["punctuate"] else "false",
         "utterances": "true" if presets["params"]["utterances"] else "false",
@@ -184,7 +203,7 @@ class DeepgramClient:
             "POST",
             LISTEN_URL,
             headers={**self._auth_headers(), "Content-Type": "audio/wav"},
-            params=build_listen_params(language),
+            params=build_listen_params(language, model=self.model),
             data=wav_bytes,
             timeout=timeout,
             max_retries=self.max_retries,

@@ -19,12 +19,15 @@ def test_app_constructs(window) -> None:
     assert window.windowTitle() == "ClipForge"
     assert window._home is not None
     assert window._wizard is not None
-    # Sample projects seeded from the reference recording.
-    assert len(window._store.projects) == 12
+    # A fresh store starts EMPTY — the old seeded sample projects (no
+    # source file, no thumbnail) were removed: they were dead cards that
+    # showed placeholders and led to a file picker when clicked.
 
 
 def test_home_to_wizard_navigation(window) -> None:
-    project = window._store.projects[0]
+    from clipforge.core.projects import Project
+
+    project = Project(name="nav-test")
     window._open_project(project)
     assert window._stack.currentWidget() is window._wizard
     window._wizard.go_to_step(1)
@@ -36,7 +39,9 @@ def test_home_to_wizard_navigation(window) -> None:
 
 
 def test_start_clipping_disabled_until_ready(window) -> None:
-    window._open_project(window._store.projects[0])
+    from clipforge.core.projects import Project
+
+    window._open_project(Project(name="not-ready-test"))
     window._wizard.go_to_step(1)
     # No video selected and no language chosen -> disabled.
     assert not window._wizard._start_btn.isEnabled()
@@ -45,8 +50,8 @@ def test_start_clipping_disabled_until_ready(window) -> None:
 
 def test_settings_dialog_opens(window) -> None:
     dialog = SettingsDialog(window._settings, window)
-    assert dialog._stack.count() == 7  # no Experimental tab
-    assert dialog._nav.count() == 7
+    assert dialog._stack.count() == 8  # incl. the Experimental tab
+    assert dialog._nav.count() == 8
     dialog.close()
 
 
@@ -91,3 +96,82 @@ def test_opening_a_project_resets_wizard_state(window, tmp_path) -> None:
     assert not window._wizard._viral.is_ready
     assert not window._wizard._start_btn.isEnabled()
     window._show_home()
+
+
+def _pump_until(predicate, timeout_s: float = 10.0) -> bool:
+    """Process Qt events until ``predicate()`` or the deadline passes."""
+    import time
+
+    from PySide6.QtWidgets import QApplication
+
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        QApplication.processEvents()
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
+def test_home_grid_columns_follow_window_width(window, tmp_path) -> None:
+    """Grid reflow regression: no hard-coded 5 columns / clipped cards."""
+    from pathlib import Path
+
+    from clipforge.core.projects import Project, ProjectStore
+    from clipforge.ui.home import CARD_MIN_WIDTH, HomePage
+
+    store = ProjectStore(Path(tmp_path) / "projects.json")
+    for i in range(6):
+        store.add(Project(name=f"grid-{i}"))
+    page = HomePage(store)
+    page.refresh()
+    page.resize(1280, 800)
+    page.show()
+    QApplication.processEvents()
+    wide_columns = page._columns
+    assert wide_columns >= 4
+    # Every card sits inside the computed column count.
+    for index, card in enumerate(page._cards):
+        row, col, _rs, _cs = page._grid_layout.getItemPosition(
+            page._grid_layout.indexOf(card)
+        )
+        assert col < wide_columns
+        assert row == index // wide_columns
+    page.resize(430, 800)
+    QApplication.processEvents()
+    narrow_columns = page._columns
+    assert 1 <= narrow_columns < wide_columns
+    # Column width never drops below the card minimum (no clipped strips).
+    viewport = page._scroll.viewport().width()
+    assert viewport // narrow_columns >= CARD_MIN_WIDTH - 20
+    page.close()
+
+
+def test_home_repairs_missing_thumbnail(window, tmp_path) -> None:
+    """A real project without a thumbnail gets one in the background."""
+    import subprocess
+    from pathlib import Path
+
+    from clipforge.core.ffmpeg import find_ffmpeg
+    from clipforge.core.projects import Project, ProjectStore
+    from clipforge.ui.home import HomePage
+
+    video = str(tmp_path / "source.mp4")
+    subprocess.run(
+        [find_ffmpeg(), "-y", "-v", "error",
+         "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=5",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=5",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+         "-shortest", video],
+        check=True,
+    )
+    store = ProjectStore(Path(tmp_path) / "projects.json")
+    project = Project(name="thumb-test", source_path=video)
+    store.add(project)
+    page = HomePage(store)
+    page.refresh()
+    page.show()
+    QApplication.processEvents()
+    assert _pump_until(lambda: bool(project.thumbnail
+                                    and Path(project.thumbnail).exists()))
+    page.close()

@@ -104,6 +104,39 @@ def _open_wizard_with_video(window, tmp_path) -> str:
     return video
 
 
+def test_open_project_loads_source_and_restores_clips(qapp, app_window, tmp_path) -> None:
+    """Project click -> in-app workspace (regression: spec item 12).
+
+    Opening a project must load its source video and land on the Viral
+    Clips step with the saved clips on the timeline — never on the
+    Select Video step / a file browser.
+    """
+    window = app_window
+    video = _make_video(tmp_path)
+    project = Project(
+        name="saved-project",
+        source_path=video,
+        clips=[{"start": 2.0, "end": 6.0, "source": "manual", "label": "Clip 1"}],
+        status="clips_ready",
+    )
+    window._open_project(project)
+    assert window._wizard.video_path == video
+    assert window._wizard.video_duration > 0
+    assert window._wizard._step == 1  # Viral Clips, not Select Video
+    assert window._wizard._viral.timeline.ai_clips == [(2.0, 6.0)]
+    window._show_home()
+
+
+def test_open_project_with_missing_source_stays_on_select_step(qapp, app_window) -> None:
+    """A project whose file is gone falls back to Select Video (only then)."""
+    window = app_window
+    project = Project(name="gone", source_path="/nonexistent/gone.mp4")
+    window._open_project(project)
+    assert window._wizard.video_path == ""
+    assert window._wizard._step == 0
+    window._show_home()
+
+
 def test_start_clipping_happy_path(qapp, app_window, tmp_path, monkeypatch) -> None:
     window = app_window
     video = _open_wizard_with_video(window, tmp_path)

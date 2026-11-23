@@ -1,8 +1,8 @@
-"""Settings dialog — 7 tabs, matching the reference recording.
+"""Settings dialog — 8 tabs, matching the reference recording.
 
 Tabs (in order): General, Transcription, AI Provider, Processing,
-Viral Clips, Fonts, Updates. The recording's "Experimental" tab is
-REMOVED per the build spec (multi-person split screen is automatic).
+Viral Clips, Fonts, Experimental, Updates. The Experimental tab holds
+the multi-person split-screen toggle, as in the reference recording.
 
 Changes apply immediately (no Save/Cancel). API keys validate
 automatically 1 second after typing or pasting; the inline status line
@@ -81,6 +81,7 @@ TABS = [
     "settings.processing",
     "settings.viral_clips",
     "settings.fonts",
+    "settings.experimental",
     "settings.updates",
 ]
 
@@ -124,6 +125,7 @@ class SettingsDialog(QDialog):
             self._processing_page(),
             self._viral_clips_page(),
             self._fonts_page(),
+            self._experimental_page(),
             self._updates_page(),
         ]
         for page in self._pages:
@@ -267,7 +269,13 @@ class SettingsDialog(QDialog):
         ))
 
         model = QComboBox(self)
-        model.addItems(["Enhanced"])
+        model.addItems(["Nova-3", "Nova-2", "Enhanced"])
+        saved_model = str(self._settings.get("transcription_model"))
+        if saved_model in ("Nova-3", "Nova-2", "Enhanced"):
+            model.setCurrentText(saved_model)
+        model.currentTextChanged.connect(
+            lambda text: self._settings.set("transcription_model", text)
+        )
         card.addLayout(self._row(
             "Model", "Speech recognition model for fast word-by-word timestamps", model,
         ))
@@ -278,11 +286,32 @@ class SettingsDialog(QDialog):
         card.addWidget(self._dg_status)
         return page
 
+    #: AI provider presets: label -> base URL (Custom keeps the typed URL).
+    AI_PROVIDER_PRESETS: dict[str, str] = {
+        "DeepSeek": "https://api.deepseek.com",
+        "OpenAI": "https://api.openai.com/v1",
+        "Gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+    }
+
     def _ai_provider_page(self) -> QWidget:
         page, card = self._page("settings.ai_provider")
 
         provider = QComboBox(self)
-        provider.addItems(["OpenAI-compatible API"])
+        provider.addItems([*self.AI_PROVIDER_PRESETS, "Custom (OpenAI-compatible)"])
+        # Initial selection: the saved provider, else inferred from the
+        # saved base URL, else Custom. Set BEFORE connecting the handler
+        # so opening the dialog never rewrites the user's URL.
+        saved_provider = str(self._settings.get("ai_provider"))
+        saved_url = str(self._settings.get("ai_base_url"))
+        if saved_provider in self.AI_PROVIDER_PRESETS:
+            provider.setCurrentText(saved_provider)
+        elif saved_url in self.AI_PROVIDER_PRESETS.values():
+            provider.setCurrentText(
+                next(k for k, v in self.AI_PROVIDER_PRESETS.items() if v == saved_url)
+            )
+        else:
+            provider.setCurrentText("Custom (OpenAI-compatible)")
+        self._ds_provider = provider
         card.addLayout(self._row("Provider", "Choose the AI Provider.", provider))
 
         base_url = QLineEdit(self)
@@ -290,15 +319,17 @@ class SettingsDialog(QDialog):
         base_url.editingFinished.connect(
             lambda: self._on_base_url_changed(base_url.text())
         )
+        self._ds_base_url = base_url
         card.addLayout(self._row(
-            "Base URL", "API root ending in /v1; chat completions are used.", base_url,
+            "Base URL", "API root of the provider; chat completions are used.", base_url,
         ))
+        provider.currentTextChanged.connect(self._on_ai_provider_changed)
 
         key_row = QHBoxLayout()
         self._ds_key = QLineEdit(self)
         self._ds_key.setEchoMode(QLineEdit.EchoMode.Password)
         self._ds_key.setPlaceholderText(
-            "Key saved — type to replace" if has_key("deepseek") else "DeepSeek API key"
+            "Key saved — type to replace" if has_key("deepseek") else "Provider API key"
         )
         self._ds_key.textChanged.connect(self._on_ds_key_edited)
         self._ds_timer = QTimer(self)
@@ -1066,6 +1097,17 @@ class SettingsDialog(QDialog):
         ).validated()
         self._settings.set_caption_layout(layout)
 
+    def _experimental_page(self) -> QWidget:
+        page, card = self._page("settings.experimental")
+
+        split = ToggleSwitch(bool(self._settings.get("split_screen")), self)
+        split.toggled.connect(lambda v: self._settings.set("split_screen", v))
+        self._split_switch = split
+        card.addLayout(self._row(
+            t("settings.split_screen"), t("settings.split_screen_hint"), split,
+        ))
+        return page
+
     def _updates_page(self) -> QWidget:
         page, card = self._page("settings.updates")
         version = QLabel(f"ClipForge {__version__}", self)
@@ -1281,6 +1323,19 @@ class SettingsDialog(QDialog):
         key = self._ds_key.text().strip()
         if key:
             self._start_ds_validation(key, from_field=True)
+
+    def _on_ai_provider_changed(self, label: str) -> None:
+        """Provider preset picked: point the base URL at that provider.
+
+        The model dropdown then refills live from the new provider's
+        ``/models`` (via key revalidation), so DeepSeek shows DeepSeek's
+        models, Gemini shows Gemini's, OpenAI shows OpenAI's.
+        """
+        self._settings.set("ai_provider", label)
+        preset_url = self.AI_PROVIDER_PRESETS.get(label)
+        if preset_url:
+            self._ds_base_url.setText(preset_url)
+            self._on_base_url_changed(preset_url)
 
     def _on_base_url_changed(self, text: str) -> None:
         self._settings.set("ai_base_url", text)

@@ -18,10 +18,14 @@ DEFAULTS: dict[str, object] = {
     "appearance": "dark",  # "system" | "light" | "dark"
     "app_language": "en",  # "en" | "bn" | "ar" | "ur"
     "always_approve": False,
+    # Experimental (Settings > Experimental): two-person split screen —
+    # when two people share a clip, stack a face-framed pane for each
+    # instead of one tracked crop. Off = always the single tracked crop.
+    "split_screen": True,
     "export_destination": "",  # empty = platform Movies/ClipForge
     "transcription_engine": "deepgram",  # "deepgram" | "whisper_local"
-    "transcription_model": "Enhanced",
-    "ai_provider": "OpenAI-compatible API",
+    "transcription_model": "Nova-3",
+    "ai_provider": "DeepSeek",
     "ai_base_url": "https://api.deepseek.com",
     "ai_model": "deepseek-flash",
     "accel_transcription": "Auto",  # "Auto" | "GPU" | "CPU"

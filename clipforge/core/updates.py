@@ -184,7 +184,7 @@ def _releases_url(repo: str) -> str:
 
 def update_repo() -> str:
     """Configured GitHub repo for the update feed (``owner/name``)."""
-    return str(load_presets().get("updates", {}).get("repo", "clipforge/clipforge"))
+    return str(load_presets().get("updates", {}).get("repo", "gamingwithtamim455-afk/ClipForge"))
 
 
 def check_for_updates(

@@ -149,20 +149,48 @@ def _escape_filter_arg(value: str) -> str:
     return "'" + escaped + "'"
 
 
+def _sendcmd_lines(
+    times: list[float], boxes: list, target: str
+) -> list[str]:
+    """sendcmd lines driving one crop filter along ``boxes``.
+
+    Line grammar is ``<time> <target> <option> <value>;`` where the
+    target is the crop filter's (instance) name — ``crop`` for the
+    single tracked crop, ``crop@pa``/``crop@pb`` for the split panes
+    (an untargeted command would reach EVERY crop filter in the graph).
+    One command per option per timestamp, because the crop filter
+    accepts a single argument per command.
+    """
+    lines: list[str] = []
+    for t, box in zip(times, boxes):
+        ts = max(0.0, t)
+        lines.append(f"{ts:.3f} {target} x {int(round(box.x))};")
+        lines.append(f"{ts:.3f} {target} y {int(round(box.y))};")
+    return lines
+
+
 def _sendcmd_file(
     path: Path, *, crop_path: CropPath, crop_w: int, crop_h: int
 ) -> None:
     """Write a sendcmd file driving the crop filter along the crop path.
 
-    One command per option per timestamp (the crop filter accepts a
-    single argument per command). Timestamps are clip-relative because
-    the input is sought to the clip start before decoding.
+    Timestamps are clip-relative because the input is sought to the
+    clip start before decoding.
     """
-    lines: list[str] = []
-    for t, box in zip(crop_path.times, crop_path.boxes):
-        ts = max(0.0, t)
-        lines.append(f"{ts:.3f} crop x {int(round(box.x))};")
-        lines.append(f"{ts:.3f} crop y {int(round(box.y))};")
+    lines = _sendcmd_lines(crop_path.times, crop_path.boxes, "crop")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _split_sendcmd_file(path: Path, *, crop_path: CropPath) -> None:
+    """Write ONE sendcmd file driving both split-screen panes.
+
+    The graph names its crops ``crop@pa`` (top) and ``crop@pb``
+    (bottom); each pane's commands are targeted at its own instance so
+    the two paths never cross-talk. Lines are merged in time order.
+    """
+    lines = _sendcmd_lines(crop_path.times, crop_path.boxes, "crop@pa")
+    lines += _sendcmd_lines(crop_path.times, crop_path.boxes_b, "crop@pb")
+    lines.sort(key=lambda line: float(line.split(" ", 1)[0]))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -183,6 +211,19 @@ def _filter_graph(
         ass = (
             f",ass={_escape_filter_arg(ass_path)}"
             f":fontsdir={_escape_filter_arg(str(fonts))}"
+        )
+    if crop_path is not None and crop_path.mode == "split":
+        # Two-person split screen: two face-tracked crops (instance-
+        # named so one sendcmd file drives each separately), each
+        # scaled to full width x half height and stacked.
+        pane_h = height // 2
+        return (
+            "[0:v]sendcmd=f={cmds},split=2[sa][sb];"
+            f"[sa]crop@pa=w={crop_w}:h={crop_h}:x=0:y=0,"
+            f"scale={width}:{pane_h}:flags=lanczos,setsar=1[top];"
+            f"[sb]crop@pb=w={crop_w}:h={crop_h}:x=0:y=0,"
+            f"scale={width}:{height - pane_h}:flags=lanczos,setsar=1[bot];"
+            f"[top][bot]vstack=inputs=2{ass},format=yuv420p[vout]"
         )
     if crop_path is not None and crop_path.mode == "blur-fit":
         # No face: blurred cover background + fitted foreground.
@@ -220,24 +261,36 @@ def _output_face_rects(
 
     ``crop_path.faces`` are normalized in the source frame; ``boxes``
     are the crop rectangles in native pixels. A face outside the crop
-    maps outside the output frame and is skipped.
+    maps outside the output frame and is skipped. In split mode each
+    person's face is mapped into its own pane (top / bottom half).
     """
-    rects: list[tuple[float, float, float, float]] = []
-    for crop, face in zip(crop_path.boxes, crop_path.faces):
-        if face is None or crop.width <= 0 or crop.height <= 0:
-            continue
-        fx = face.x * source_w
-        fy = face.y * source_h
-        fw = face.width * source_w
-        fh = face.height * source_h
-        sx = out_w / crop.width
-        sy = out_h / crop.height
-        x = (fx - crop.x) * sx
-        y = (fy - crop.y) * sy
-        if x + fw <= 0 or y + fh <= 0 or x >= out_w or y >= out_h:
-            continue
-        rects.append((x, y, fw * sx, fh * sy))
-    return rects
+    def _map(
+        crops: list, faces: list, pane_y: int, pane_h: int
+    ) -> list[tuple[float, float, float, float]]:
+        mapped: list[tuple[float, float, float, float]] = []
+        for crop, face in zip(crops, faces):
+            if face is None or crop.width <= 0 or crop.height <= 0:
+                continue
+            fx = face.x * source_w
+            fy = face.y * source_h
+            fw = face.width * source_w
+            fh = face.height * source_h
+            sx = out_w / crop.width
+            sy = pane_h / crop.height
+            x = (fx - crop.x) * sx
+            y = pane_y + (fy - crop.y) * sy
+            if x + fw * sx <= 0 or y + fh * sy <= pane_y or x >= out_w \
+                    or y >= pane_y + pane_h:
+                continue
+            mapped.append((x, y, fw * sx, fh * sy))
+        return mapped
+
+    if crop_path.mode == "split" and crop_path.boxes_b:
+        pane_h = out_h // 2
+        return _map(crop_path.boxes, crop_path.faces, 0, pane_h) + _map(
+            crop_path.boxes_b, crop_path.faces_b, pane_h, out_h - pane_h
+        )
+    return _map(crop_path.boxes, crop_path.faces, 0, out_h)
 
 
 # ----------------------------------------------------------------------
@@ -524,6 +577,11 @@ def render_clip(
                 graph = graph.replace(
                     "{cmds}", _escape_filter_arg(str(tmp_path / "crop.cmds"))
                 )
+            elif crop_path is not None and crop_path.mode == "split":
+                _split_sendcmd_file(tmp_path / "crop.cmds", crop_path=crop_path)
+                graph = graph.replace(
+                    "{cmds}", _escape_filter_arg(str(tmp_path / "crop.cmds"))
+                )
 
             encoder, is_gpu = select_video_encoder(settings.encoder)
             args: list[str] = [
@@ -589,6 +647,8 @@ def render_clip(
         )
     if crop_path is not None and crop_path.mode == "blur-fit":
         flags.append("no face found — used blur-fit background")
+    if crop_path is not None and crop_path.mode == "split":
+        flags.append("two-person split screen")
     if crop_path is not None and crop_path.needs_review:
         flags.append("face tracking QA failed — review framing in the Edit step")
     if settings.captions == "burn" and not words:

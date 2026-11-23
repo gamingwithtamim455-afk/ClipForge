@@ -370,15 +370,41 @@ def test_pipeline_offline_falls_back_to_whisper(tmp_path, monkeypatch) -> None:
     assert len(result.render_jobs) == 1
 
 
-def test_pipeline_missing_deepgram_key_points_at_settings(tmp_path, monkeypatch) -> None:
+def test_pipeline_missing_deepgram_key_falls_back_to_whisper(tmp_path, monkeypatch) -> None:
+    """Zero API keys: a manual-range run still completes via local Whisper.
+
+    Regression test for the first-run blocker: the pipeline used to raise
+    "Deepgram API key is missing" before doing any work, even for manual
+    timeline cuts that need no cloud service.
+    """
+    from clipforge.core.transcription import Transcript as _T
+    from clipforge.core.transcription import Word as _W
+
     video = _make_video(tmp_path)
     monkeypatch.setattr("clipforge.core.pipeline.get_key", lambda provider: None)
+    fallback_transcript = _T(
+        language="en",
+        words=[_W("hello", 0.5, 0.9), _W("world", 1.0, 1.4)],
+        engine="whisper_local",
+        used_fallback=True,
+        note="No Deepgram API key — used local Whisper instead.",
+    )
+    monkeypatch.setattr(
+        "clipforge.core.transcription._transcribe_with_whisper",
+        lambda *a, **k: fallback_transcript,
+    )
     config = PipelineConfig(
         video_path=video, language="en", engine="deepgram",
         manual_ranges=[ClipRange(start=2.0, end=6.0)],
+        export_dir=str(tmp_path / "exports"),
+        project_name="no-keys",
+        render_settings=_small_settings(),
     )
-    with pytest.raises(PipelineError, match="Settings"):
-        run_pipeline(config, track_faces_fn=lambda video_path, **kw: _fake_crop_path())
+    result = run_pipeline(
+        config, track_faces_fn=lambda video_path, **kw: _fake_crop_path()
+    )
+    assert result.transcript.engine == "whisper_local"
+    assert len(result.render_jobs) == 1
 
 
 def test_pipeline_missing_deepseek_key_in_auto_mode(tmp_path, monkeypatch) -> None:
@@ -533,3 +559,27 @@ def test_render_jobs_retime_caption_words_to_clip(tmp_path) -> None:
     assert "0:00:00.50" in ass
     assert "0:00:05.50" in ass
     assert "0:00:35" not in ass
+
+
+def test_quality_labels_map_to_exact_render_dimensions() -> None:
+    """Spec item 2/14: the selected quality IS the rendered size.
+
+    1080p -> 1080x1920, 1440p -> 1440x2560, 4K -> 2160x3840, plumbed
+    through PipelineConfig into the RenderSettings every job uses
+    (render_clip additionally probe-verifies the encoded file's size).
+    """
+    from clipforge.core.pipeline import QUALITY_SIZES
+
+    assert QUALITY_SIZES == {
+        "1080p": (1080, 1920),
+        "1440p": (1440, 2560),
+        "4K": (2160, 3840),
+    }
+    for label, (width, height) in QUALITY_SIZES.items():
+        settings = PipelineConfig(
+            video_path="x.mp4", quality=label
+        ).render_settings_for()
+        assert (settings.width, settings.height) == (width, height)
+        assert settings.quality_label == label
+        # High-quality encoding defaults are part of the quality gate.
+        assert settings.crf <= 16

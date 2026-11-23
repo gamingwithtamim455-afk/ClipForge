@@ -216,7 +216,7 @@ def test_transcribe_with_whisper_scales_download_to_first_30_percent(monkeypatch
     calls: list[tuple[int, str]] = []
 
     class _FakeClient:
-        def __init__(self, model_size=None):
+        def __init__(self, model_size=None, device="auto"):
             pass
 
         def transcribe(self, path, language=None, download_progress=None):

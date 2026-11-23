@@ -128,10 +128,14 @@ class PipelineConfig:
     video_path: str
     language: str = "auto"  # BCP-47 code, or "auto"
     engine: str = "deepgram"  # "deepgram" | "whisper_local"
+    deepgram_model: str | None = None  # model ID override (Settings choice)
+    whisper_model: str = "small"  # local Whisper model size
+    whisper_device: str = "auto"  # "auto" | "cpu" | "cuda" (Settings accel)
     clip_length: float = 30.0
     clips_requested: int | None = None  # None = Auto -> DEFAULT_AUTO_CLIPS
     manual_ranges: list[ClipRange] = field(default_factory=list)
     captions: str = "burn"  # "burn" | "none" ("Cutout Only" = no burn-in)
+    split_screen: bool = True  # Settings > Experimental: two-person split
     quality: str = "1080p"  # "1080p" | "1440p" | "4K"
     aspect: tuple[int, int] = (9, 16)
     accel: str = "Auto"  # "Auto" | "GPU" | "CPU"
@@ -373,12 +377,9 @@ def run_pipeline(
             )
             for i, r in enumerate(config.manual_ranges)
         ]
-    if config.engine == "deepgram" and deepgram_client is None:
-        if not deepgram_key():
-            raise PipelineError(
-                "Deepgram API key is missing — add it in "
-                "Settings > Transcription, or switch to Local Whisper (Offline)."
-            )
+    # No Deepgram key is not a blocker: the transcription layer falls back
+    # to local Whisper (with a status note) when no key is stored, so the
+    # app fully works with zero API keys. Only a *wrong* key (401) errors.
     try:
         if manual_validated is not None:
             total_audio = sum(r.end - r.start for r in manual_validated)
@@ -394,6 +395,9 @@ def run_pipeline(
                 language=config.language,
                 engine=config.engine,
                 deepgram_key=deepgram_key() or "",
+                deepgram_model=config.deepgram_model,
+                whisper_model=config.whisper_model,
+                whisper_device=config.whisper_device,
                 deepgram_client=deepgram_client,
                 progress=lambda p, m: _report(5 + int(p * 0.35), m),
                 cancel=cancel,
@@ -405,6 +409,9 @@ def run_pipeline(
                 language=config.language,
                 engine=config.engine,
                 deepgram_key=deepgram_key() or "",
+                deepgram_model=config.deepgram_model,
+                whisper_model=config.whisper_model,
+                whisper_device=config.whisper_device,
                 deepgram_client=deepgram_client,
                 progress=lambda p, m: _report(5 + int(p * 0.35), m),
                 cancel=cancel,
@@ -478,7 +485,7 @@ def run_pipeline(
         try:
             path = tracker(
                 config.video_path, start=rng.start, end=rng.end,
-                aspect=config.aspect,
+                aspect=config.aspect, split_screen=config.split_screen,
             )
         except Exception:
             # One bad range must not kill the run: render it with a plain

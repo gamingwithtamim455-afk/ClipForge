@@ -36,11 +36,19 @@ FALLBACK_MODEL = "deepseek-v4-pro"
 LEGACY_ALIASES = {"deepseek-v4-flash": "deepseek-flash"}
 
 
-def normalize_base_url(url: str) -> str:
-    """Normalize a DeepSeek base URL.
+def is_deepseek_host(base_url: str) -> bool:
+    """True when the base URL points at DeepSeek's own API host."""
+    return "deepseek.com" in base_url
 
-    Trim whitespace, strip a trailing ``/``, then strip a trailing ``/v1``
-    (DeepSeek paths have no ``/v1`` segment, unlike OpenAI).
+
+def normalize_base_url(url: str) -> str:
+    """Normalize an AI provider base URL.
+
+    Trim whitespace and strip a trailing ``/``. A trailing ``/v1`` is
+    stripped ONLY for DeepSeek (its paths have no ``/v1`` segment) —
+    OpenAI's ``https://api.openai.com/v1`` and Gemini's compatible
+    endpoint REQUIRE their versioned path, so stripping it there broke
+    every request with a 404.
 
     >>> normalize_base_url("https://api.deepseek.com")
     'https://api.deepseek.com'
@@ -50,9 +58,13 @@ def normalize_base_url(url: str) -> str:
     'https://api.deepseek.com'
     >>> normalize_base_url(" https://api.deepseek.com/v1/ ")
     'https://api.deepseek.com'
+    >>> normalize_base_url("https://api.openai.com/v1")
+    'https://api.openai.com/v1'
+    >>> normalize_base_url("https://generativelanguage.googleapis.com/v1beta/openai/")
+    'https://generativelanguage.googleapis.com/v1beta/openai'
     """
     base = url.strip().rstrip("/")
-    if base.endswith("/v1"):
+    if is_deepseek_host(base) and base.endswith("/v1"):
         base = base[: -len("/v1")]
     return base.rstrip("/")
 
@@ -86,6 +98,10 @@ class DeepSeekClient:
         self.base_url = normalize_base_url(self.base_url)
         self.model = resolve_model_id(self.model)
         self._session = self.session if self.session is not None else requests.Session()
+        # DeepSeek-specific request shaping (thinking params, /v1-less
+        # paths) applies only to DeepSeek's own host; the same client
+        # serves OpenAI / Gemini / custom OpenAI-compatible endpoints.
+        self._deepseek_host = is_deepseek_host(self.base_url)
 
     @property
     def models_url(self) -> str:
@@ -99,7 +115,14 @@ class DeepSeekClient:
         return {"Authorization": f"Bearer {self.api_key}"}
 
     def _thinking_body(self, thinking: bool) -> dict:
-        """Thinking config from presets: discovery on/high, caption off."""
+        """Thinking config from presets: discovery on/high, caption off.
+
+        DeepSeek-only: other providers (OpenAI, Gemini) reject or
+        mishandle DeepSeek's ``thinking``/``reasoning_effort`` fields,
+        so for them the request body stays plain.
+        """
+        if not self._deepseek_host:
+            return {}
         presets = load_presets()["deepseek"]["thinking"]
         return dict(presets["discovery" if thinking else "caption"])
 

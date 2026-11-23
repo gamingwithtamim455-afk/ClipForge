@@ -13,9 +13,12 @@ Schema history:
 
 Weekly backups are handled by :mod:`clipforge.core.backups`.
 
-The store is seeded with sample projects on first run so the Home grid
-matches the reference recording; sample projects are flagged ``sample=True``
-and carry generated thumbnails.
+A fresh store starts EMPTY. (Earlier versions seeded fake sample projects
+on first run so the Home grid matched a reference recording — those cards
+had no source file and no thumbnail, so most of the grid showed placeholder
+art and clicking one led to a file picker instead of a project. That data
+bug is why seeding was removed; ``SAMPLE_PROJECTS`` is kept only as a
+record of the old demo data.)
 """
 
 from __future__ import annotations
@@ -132,11 +135,9 @@ class ProjectStore:
                 except OSError:
                     pass
                 self.projects = []
-        self.projects = [
-            Project(name=s["name"], duration=s["duration"], badge=s["badge"],
-                    cutout=s.get("cutout", False), sample=True)
-            for s in SAMPLE_PROJECTS
-        ]
+        # Fresh or recovered store: start empty (see module docstring —
+        # never seed fake projects into a real store again).
+        self.projects = []
         self.save()
 
     def save(self) -> None:

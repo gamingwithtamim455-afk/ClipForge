@@ -13,6 +13,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -33,6 +34,7 @@ from ..core.render import (
     RenderSettings,
 )
 from ..i18n import t
+from .widgets import VideoPlayerWidget
 
 __all__ = ["RenderPage", "whatsapp_share_folder"]
 
@@ -114,6 +116,13 @@ class RenderPage(QWidget):
         self._copy_btn.setEnabled(False)
         self._copy_btn.clicked.connect(self._on_copy_clicked)
         center_layout.addWidget(self._copy_btn, 0)
+        # In-app preview of the finished clip (FuseClip's "Preview Clip") —
+        # before this, the only way to watch a rendered clip was the OS
+        # file manager.
+        self._preview_btn = QPushButton("Preview clip", self)
+        self._preview_btn.setEnabled(False)
+        self._preview_btn.clicked.connect(self._on_preview_clicked)
+        center_layout.addWidget(self._preview_btn, 0)
         root.addWidget(center, 1)
 
         # Right: render action.
@@ -172,6 +181,7 @@ class RenderPage(QWidget):
             self._clip_list.addItem("No clips rendered yet.")
             self._clip_list.setEnabled(False)
             self._copy_btn.setEnabled(False)
+            self._preview_btn.setEnabled(False)
             return
         self._clip_list.setEnabled(True)
         for result in results:
@@ -235,7 +245,9 @@ class RenderPage(QWidget):
         if row < 0 or row >= len(self._results):
             self._caption_view.clear()
             self._copy_btn.setEnabled(False)
+            self._preview_btn.setEnabled(False)
             return
+        self._preview_btn.setEnabled(True)
         result = self._results[row]
         if result.label_written:
             text = result.caption + "\n\n" + " ".join(result.hashtags)
@@ -245,6 +257,22 @@ class RenderPage(QWidget):
             text = "No caption for this clip."
         self._caption_view.setPlainText(text)
         self._copy_btn.setEnabled(result.label_written)
+
+    def _on_preview_clicked(self) -> None:
+        """Play the selected rendered clip inside the app."""
+        row = self._clip_list.currentRow()
+        if row < 0 or row >= len(self._results):
+            return
+        result = self._results[row]
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Clip {result.index:02d} — preview")
+        layout = QVBoxLayout(dialog)
+        player = VideoPlayerWidget(dialog, video_width=324, video_height=576)
+        layout.addWidget(player)
+        player.set_source(result.video_path)
+        player.play()
+        dialog.exec()
+        player.pause()
 
     def _on_copy_clicked(self) -> None:
         text = self._caption_view.toPlainText()

@@ -273,12 +273,21 @@ def test_transcribe_audio_does_not_fall_back_on_invalid_key(tmp_path) -> None:
     assert excinfo.value.kind == "invalid_key"
 
 
-def test_transcribe_audio_requires_a_key(tmp_path) -> None:
+def test_transcribe_audio_without_a_key_falls_back_to_whisper(tmp_path, monkeypatch) -> None:
+    """No Deepgram key stored -> local Whisper covers it (never a hard stop).
+
+    The app must fully work with zero API keys; only a *wrong* key (401,
+    covered above) is an error.
+    """
     wav_path = tmp_path / "audio.wav"
     wav_path.write_bytes(make_wav(5))
-    with pytest.raises(ProviderError) as excinfo:
-        transcribe_audio(str(wav_path), language="en", engine="deepgram")
-    assert excinfo.value.kind == "invalid_key"
+    monkeypatch.setattr(
+        "clipforge.core.transcription.WhisperLocalClient", FakeWhisperClient
+    )
+    transcript = transcribe_audio(str(wav_path), language="en", engine="deepgram")
+    assert transcript.engine == "whisper_local"
+    assert transcript.used_fallback
+    assert "No Deepgram API key" in transcript.note
 
 
 def test_transcribe_video_extracts_then_transcribes(tmp_path, monkeypatch) -> None:

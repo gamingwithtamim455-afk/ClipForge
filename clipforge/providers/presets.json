@@ -45,7 +45,7 @@
     "models": ["tiny", "base", "small", "medium", "large-v3"]
   },
   "updates": {
-    "repo": "clipforge/clipforge",
+    "repo": "gamingwithtamim455-afk/ClipForge",
     "releases_api": "https://api.github.com/repos/{repo}/releases/latest"
   }
 }

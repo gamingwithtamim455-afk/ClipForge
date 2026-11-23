@@ -10,6 +10,8 @@ Rules (build spec §5):
   the head.
 - Crop coordinates come from native-resolution frames, before scaling.
 - Auto-fallback to blur-fit when no face is found.
+- Two people sharing a clip (both present through the range) get a
+  two-up split-screen path when the Experimental setting is on.
 - Auto-QA: face inside the crop in >= 99% of sampled frames; otherwise
   retry with a stricter path and mark the clip for the Edit step.
 """
@@ -30,6 +32,7 @@ __all__ = [
     "CropPath",
     "FaceBox",
     "detect_scene_cuts",
+    "dominant_identity_pair",
     "face_inside_crop_fraction",
     "models_dir",
     "scene_cut_flags",
@@ -50,6 +53,19 @@ QA_THRESHOLD = 0.99
 #: PySceneDetect content-change threshold (0-100; 27 is the library
 #: default and a good general value for hard cuts).
 SCENE_CUT_THRESHOLD = 27.0
+#: Detection runs on frames downscaled to at most this width. Detection
+#: output is normalised coordinates, so the crop math (native pixels) is
+#: unaffected — but a 4K frame held for detection costs ~16x the memory
+#: and CPU of a 960 px one, and a clip samples ~200 frames.
+DETECT_MAX_WIDTH = 960
+#: Split screen (Settings > Experimental): the second-most-present
+#: person must appear in at least this share of the samples that contain
+#: any face for the clip to count as two-person — below that they are a
+#: passer-by and the clip keeps the single tracked crop.
+SPLIT_MIN_SECOND_FRACTION = 0.30
+#: Split screen is only considered with at least this many face samples
+#: (very short or mostly faceless clips keep the single crop).
+SPLIT_MIN_FACE_SAMPLES = 5
 
 
 @dataclass
@@ -89,16 +105,22 @@ class CropPath:
     height), one per entry in ``times`` (seconds, clip-relative).
     ``faces`` holds the active face per sample (``None`` when no face was
     detected at that time).
+
+    In ``"split"`` mode (two-person split screen) ``boxes``/``faces``
+    describe the TOP pane and ``boxes_b``/``faces_b`` the BOTTOM pane;
+    each pane's crop has the output aspect at half height.
     """
 
     times: list[float] = field(default_factory=list)
     boxes: list[FaceBox] = field(default_factory=list)
     faces: list[FaceBox | None] = field(default_factory=list)
-    mode: str = "track"  # "track" | "blur-fit"
+    mode: str = "track"  # "track" | "blur-fit" | "split"
     qa_face_inside_fraction: float = 1.0
     qa_passed: bool = True
     needs_review: bool = False  # True when QA failed even after retry
     fallback_fraction: float = 0.0  # share of samples with no face
+    boxes_b: list[FaceBox] = field(default_factory=list)  # split: bottom pane
+    faces_b: list[FaceBox | None] = field(default_factory=list)
 
 
 # ----------------------------------------------------------------------
@@ -470,6 +492,170 @@ def _project_to_contain(
     return xs, ys
 
 
+def dominant_identity_pair(
+    detected: list[list[FaceBox]],
+    *,
+    min_second_fraction: float = SPLIT_MIN_SECOND_FRACTION,
+    min_face_samples: int = SPLIT_MIN_FACE_SAMPLES,
+) -> tuple[int, int] | None:
+    """The two dominant face identities in a clip, or ``None``.
+
+    ``detected`` is the per-sample face list from detection. Counts the
+    samples each identity appears in; returns ``(first, second)`` (most
+    present first) when the second person still covers at least
+    ``min_second_fraction`` of the samples that contain any face — two
+    people genuinely sharing the clip (a two-shot or a conversation),
+    not a passer-by crossing one shot.
+    """
+    counts: dict[int, int] = {}
+    face_samples = 0
+    for boxes in detected:
+        if not boxes:
+            continue
+        face_samples += 1
+        for identity in {box.identity for box in boxes}:
+            counts[identity] = counts.get(identity, 0) + 1
+    if face_samples < min_face_samples or len(counts) < 2:
+        return None
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    first, second = ranked[0][0], ranked[1][0]
+    if counts[second] / face_samples < min_second_fraction:
+        return None
+    return first, second
+
+
+def _identity_series(
+    detected: list[list[FaceBox]], identity: int
+) -> list[FaceBox | None]:
+    """One identity's face per sample (``None`` where it is absent)."""
+    return [
+        next((box for box in boxes if box.identity == identity), None)
+        for boxes in detected
+    ]
+
+
+def _crop_targets(
+    faces: list[FaceBox | None],
+    crop_w: int,
+    crop_h: int,
+    frame_w: int,
+    frame_h: int,
+) -> tuple[list[float], list[float]]:
+    """Per-sample crop targets (native px) following ``faces``.
+
+    The crop is centred on the face with the headroom rule (clear space
+    above the head, never cutting off the head or the chin when they
+    fit). Samples with no face hold the previous target (centre when
+    there is none yet).
+    """
+    target_x: list[float] = []
+    target_y: list[float] = []
+    for face in faces:
+        if face is None:
+            target_x.append(target_x[-1] if target_x else (frame_w - crop_w) / 2)
+            target_y.append(target_y[-1] if target_y else (frame_h - crop_h) / 2)
+            continue
+        fx0, fy0 = face.x * frame_w, face.y * frame_h
+        fx1, fy1 = face.right * frame_w, face.bottom * frame_h
+        x = face.cx * frame_w - crop_w / 2
+        x = min(max(x, 0.0), float(frame_w - crop_w))
+        y = fy0 - HEADROOM_FRACTION * crop_h
+        y = min(y, fy0)  # never cut off the top of the head
+        y = max(y, fy1 - crop_h)  # never cut off the chin when it fits
+        y = min(max(y, 0.0), float(frame_h - crop_h))
+        target_x.append(x)
+        target_y.append(y)
+    return target_x, target_y
+
+
+def _person_crop_boxes(
+    faces: list[FaceBox | None],
+    times: list[float],
+    crop_w: int,
+    crop_h: int,
+    frame_w: int,
+    frame_h: int,
+) -> tuple[list[FaceBox], float, bool]:
+    """Smoothed crop boxes + QA for one person's face series.
+
+    Mirrors the single-speaker flow: smooth the targets, check the face
+    is inside the crop, and on failure retry stricter with containment
+    projection. Returns ``(boxes, qa_fraction, qa_passed)``.
+    """
+    def build(lam: float, max_speed: float, project: bool):
+        target_x, target_y = _crop_targets(faces, crop_w, crop_h, frame_w, frame_h)
+        xs = smooth_path_1d(target_x, times, lam=lam, max_speed=max_speed)
+        ys = smooth_path_1d(target_y, times, lam=lam, max_speed=max_speed)
+        if project:
+            xs, ys = _project_to_contain(
+                xs, ys, crop_w, crop_h, frame_w, frame_h, faces
+            )
+        boxes = [
+            FaceBox(x=x, y=y, width=float(crop_w), height=float(crop_h))
+            for x, y in zip(xs, ys)
+        ]
+        norm_crops = [
+            FaceBox(x=b.x / frame_w, y=b.y / frame_h,
+                    width=b.width / frame_w, height=b.height / frame_h)
+            for b in boxes
+        ]
+        return boxes, face_inside_crop_fraction(faces, norm_crops)
+
+    boxes, frac = build(DEFAULT_LAMBDA, DEFAULT_MAX_SPEED_PX_S, False)
+    if frac >= QA_THRESHOLD:
+        return boxes, frac, True
+    boxes, frac = build(DEFAULT_LAMBDA / 4, DEFAULT_MAX_SPEED_PX_S / 2.5, True)
+    return boxes, frac, frac >= QA_THRESHOLD
+
+
+def _split_crop_path(
+    pair: tuple[int, int],
+    detected: list[list[FaceBox]],
+    times: list[float],
+    aspect: tuple[int, int],
+    frame_w: int,
+    frame_h: int,
+) -> CropPath | None:
+    """Two-up split-screen crop path for a two-person clip, or ``None``.
+
+    Each pane is the output aspect at half height, so one person's crop
+    has aspect ``2*aw : ah``. Returns ``None`` when either pane fails QA
+    even after the strict retry — the caller then keeps the normal
+    single-speaker tracked crop.
+    """
+    aw, ah = aspect
+    crop_w = int(frame_h * 2 * aw / ah)
+    crop_h = frame_h
+    if crop_w > frame_w:
+        crop_w = frame_w
+        crop_h = int(frame_w * ah / (2 * aw))
+    crop_w -= crop_w % 2
+    crop_h -= crop_h % 2
+    series = [_identity_series(detected, identity) for identity in pair]
+    built = [
+        _person_crop_boxes(s, times, crop_w, crop_h, frame_w, frame_h)
+        for s in series
+    ]
+    if not all(passed for _boxes, _frac, passed in built):
+        return None
+    (boxes_a, frac_a, _), (boxes_b, frac_b, _) = built
+    no_face = (
+        sum(1 for boxes in detected if not boxes) / max(len(detected), 1)
+    )
+    return CropPath(
+        times=list(times),
+        boxes=boxes_a,
+        faces=series[0],
+        mode="split",
+        boxes_b=boxes_b,
+        faces_b=series[1],
+        qa_face_inside_fraction=min(frac_a, frac_b),
+        qa_passed=True,
+        needs_review=False,
+        fallback_fraction=no_face,
+    )
+
+
 def track_faces(
     video_path: str,
     *,
@@ -478,12 +664,16 @@ def track_faces(
     aspect: tuple[int, int] = (9, 16),
     sample_fps: float = 5.0,
     min_detection_confidence: float = 0.5,
+    split_screen: bool = True,
 ) -> CropPath:
     """Compute the smoothed crop path for a clip range.
 
     Samples frames at ``sample_fps`` between ``start`` and ``end``,
     detects faces + lip landmarks, picks the active speaker, and returns
-    a smoothed native-resolution crop path with a QA verdict.
+    a smoothed native-resolution crop path with a QA verdict. When
+    ``split_screen`` is on (Settings > Experimental) and two people
+    genuinely share the clip, the path is a two-up split instead — see
+    :func:`dominant_identity_pair`.
     """
     import cv2
     import mediapipe as mp
@@ -506,9 +696,12 @@ def track_faces(
     crop_w -= crop_w % 2
     crop_h -= crop_h % 2
 
-    # Sample timestamps (clip-relative) and frames.
+    # Sample timestamps (clip-relative) and frames. Frames are kept at
+    # detection resolution only (see DETECT_MAX_WIDTH) — nothing downstream
+    # needs their pixels, only the normalised boxes they produce.
     n_samples = max(1, int(round(duration * sample_fps)))
     times = [i / sample_fps for i in range(n_samples)]
+    det_w, det_h = frame_w, frame_h
     cap = cv2.VideoCapture(video_path)
     try:
         cap.set(cv2.CAP_PROP_POS_MSEC, start * 1000.0)
@@ -518,6 +711,13 @@ def track_faces(
             if not ok or frame is None:
                 frames.append(None)
                 continue
+            if frame.shape[1] > DETECT_MAX_WIDTH:
+                scale = DETECT_MAX_WIDTH / frame.shape[1]
+                frame = cv2.resize(
+                    frame,
+                    (DETECT_MAX_WIDTH, max(2, int(frame.shape[0] * scale))),
+                )
+            det_w, det_h = frame.shape[1], frame.shape[0]
             frames.append(frame)
             # Step to the next sample time.
             if i + 1 < n_samples:
@@ -525,16 +725,19 @@ def track_faces(
     finally:
         cap.release()
 
-    # Audio activity (mono 16 kHz WAV) aligned to the sample times.
+    # Audio activity (mono 16 kHz WAV) aligned to the sample times. Only
+    # this range's audio is extracted — the old code decoded the WHOLE
+    # source file per clip just for these RMS windows.
     audio_rms = [0.0] * n_samples
     with tempfile.TemporaryDirectory(prefix="clipforge-audio-") as tmp:
         wav_path = str(Path(tmp) / "audio.wav")
         try:
-            extract_audio(video_path, wav_path, sample_rate=16000)
-            # WAV times are video-absolute; sample windows use absolute time.
-            audio_rms = _audio_rms_windows(
-                wav_path, [start + t for t in times]
+            extract_audio(
+                video_path, wav_path, sample_rate=16000,
+                start=start, duration=duration,
             )
+            # The WAV starts at the range start; windows use clip time.
+            audio_rms = _audio_rms_windows(wav_path, list(times))
         except RuntimeError:
             audio_rms = [0.0] * n_samples
     audio_peak = max(audio_rms) if audio_rms else 0.0
@@ -553,8 +756,11 @@ def track_faces(
     )
 
     # Detect faces + lip landmarks per sample (MediaPipe Tasks API).
+    # Detection dimensions are the (possibly downscaled) frame size;
+    # the returned boxes are normalised, so crop targets below still
+    # multiply by the native frame size.
     detected, scene_cut = _detect_faces_in_frames(
-        frames, frame_w, frame_h,
+        frames, det_w, det_h,
         min_detection_confidence=min_detection_confidence,
         scene_cuts=cut_flags,
     )
@@ -605,27 +811,22 @@ def track_faces(
         chosen = next((b for b in boxes if b.identity == current_id), best)
         active.append(chosen)
 
+    # Multi-person split screen (Settings > Experimental): when two
+    # people genuinely share the clip, each gets a face-framed pane
+    # instead of one tracked crop jumping between them. A split that
+    # fails its QA falls through to the single-speaker path below.
+    if split_screen:
+        pair = dominant_identity_pair(detected)
+        if pair is not None:
+            split = _split_crop_path(
+                pair, detected, times, aspect, frame_w, frame_h
+            )
+            if split is not None:
+                return split
+
     # Target crop per sample (native pixels), with headroom.
-    fallback = 0
-    target_x: list[float] = []
-    target_y: list[float] = []
-    for face in active:
-        if face is None:
-            fallback += 1
-            # Hold the last target, else center.
-            target_x.append(target_x[-1] if target_x else (frame_w - crop_w) / 2)
-            target_y.append(target_y[-1] if target_y else (frame_h - crop_h) / 2)
-            continue
-        fx0, fy0 = face.x * frame_w, face.y * frame_h
-        fx1, fy1 = face.right * frame_w, face.bottom * frame_h
-        x = face.cx * frame_w - crop_w / 2
-        x = min(max(x, 0.0), float(frame_w - crop_w))
-        y = fy0 - HEADROOM_FRACTION * crop_h
-        y = min(y, fy0)  # never cut off the top of the head
-        y = max(y, fy1 - crop_h)  # never cut off the chin when it fits
-        y = min(max(y, 0.0), float(frame_h - crop_h))
-        target_x.append(x)
-        target_y.append(y)
+    fallback = sum(1 for face in active if face is None)
+    target_x, target_y = _crop_targets(active, crop_w, crop_h, frame_w, frame_h)
 
     fallback_fraction = fallback / max(len(active), 1)
     if fallback_fraction >= 1.0:

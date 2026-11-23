@@ -32,6 +32,10 @@ a = Analysis(
         "PySide6.QtCore",
         "PySide6.QtGui",
         "PySide6.QtWidgets",
+        # The video player (QMediaPlayer/QVideoWidget) — without these the
+        # frozen build can miss the multimedia modules/plugin backend.
+        "PySide6.QtMultimedia",
+        "PySide6.QtMultimediaWidgets",
         # Heavy native deps PyInstaller's analysis can miss.
         "cv2",
         "mediapipe",
@@ -66,7 +70,17 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    upx_exclude=[],
+    # UPX-compressing Qt's bundled FFmpeg multimedia backend DLLs is a
+    # known way to break video playback in the frozen app — leave them
+    # (and the multimedia plugin itself) uncompressed.
+    upx_exclude=[
+        "ffmpegmediaplugin.dll",
+        "avcodec-*.dll",
+        "avformat-*.dll",
+        "avutil-*.dll",
+        "swscale-*.dll",
+        "swresample-*.dll",
+    ],
     runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,

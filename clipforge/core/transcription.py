@@ -304,11 +304,12 @@ def _transcribe_with_whisper(
     language: str,
     model_size: str,
     progress: ProgressCallback | None,
+    device: str = "auto",
 ) -> Transcript:
     """Run local faster-whisper over the whole WAV file."""
     if progress is not None:
         progress(0, "Transcribing locally with Whisper (offline)…")
-    client = WhisperLocalClient(model_size=model_size)
+    client = WhisperLocalClient(model_size=model_size, device=device)
     # The first-use model download occupies the first 30% of this phase;
     # the status line shows its real percent + MB. When the model is
     # already cached the download callback is never invoked (no bar).
@@ -353,6 +354,8 @@ def transcribe_audio(
     engine: str = "deepgram",
     deepgram_key: str = "",
     whisper_model: str = "small",
+    deepgram_model: str | None = None,
+    whisper_device: str = "auto",
     deepgram_client: DeepgramClient | None = None,
     progress: ProgressCallback | None = None,
     cancel: Callable[[], bool] | None = None,
@@ -367,11 +370,28 @@ def transcribe_audio(
     wav_bytes = Path(wav_path).read_bytes()
     if engine == "whisper_local":
         return _transcribe_with_whisper(
-            wav_path, language=language, model_size=whisper_model, progress=progress
+            wav_path, language=language, model_size=whisper_model,
+            progress=progress, device=whisper_device,
         )
     if not deepgram_key and deepgram_client is None:
-        raise ProviderError("invalid_key", "Deepgram API key is missing")
-    client = deepgram_client or DeepgramClient(api_key=deepgram_key)
+        # No key at all is NOT an error: the app must fully work with zero
+        # API keys, so local Whisper covers transcription (with a note).
+        # A *wrong* key is different — Deepgram answers 401, which stays a
+        # loud error below and is never silently worked around.
+        fallback = _transcribe_with_whisper(
+            wav_path, language=language, model_size=whisper_model,
+            progress=progress, device=whisper_device,
+        )
+        fallback.used_fallback = True
+        fallback.note = (
+            "No Deepgram API key — used local Whisper instead. "
+            "Add a key in Settings > Transcription for cloud transcription."
+        )
+        return fallback
+    client = deepgram_client or DeepgramClient(
+        api_key=deepgram_key,
+        **({"model": deepgram_model} if deepgram_model else {}),
+    )
     chunk_seconds, overlap_seconds = _chunk_settings()
     chunks = split_wav(wav_bytes, chunk_seconds, overlap_seconds)
     transcripts: list[Transcript] = []
@@ -394,7 +414,7 @@ def transcribe_audio(
             # language / server trouble) — fall back to local Whisper.
             fallback = _transcribe_with_whisper(
                 wav_path, language=language, model_size=whisper_model,
-                progress=progress,
+                progress=progress, device=whisper_device,
             )
             fallback.used_fallback = True
             fallback.note = (
@@ -409,7 +429,8 @@ def transcribe_audio(
         # Deepgram answered but produced nothing (e.g. language dropped) —
         # same fallback, same status-line note.
         fallback = _transcribe_with_whisper(
-            wav_path, language=language, model_size=whisper_model, progress=progress
+            wav_path, language=language, model_size=whisper_model,
+            progress=progress, device=whisper_device,
         )
         fallback.used_fallback = True
         fallback.note = (
@@ -429,6 +450,8 @@ def transcribe_video(
     engine: str = "deepgram",
     deepgram_key: str = "",
     whisper_model: str = "small",
+    deepgram_model: str | None = None,
+    whisper_device: str = "auto",
     deepgram_client: DeepgramClient | None = None,
     progress: ProgressCallback | None = None,
     cancel: Callable[[], bool] | None = None,
@@ -450,6 +473,8 @@ def transcribe_video(
             engine=engine,
             deepgram_key=deepgram_key,
             whisper_model=whisper_model,
+            deepgram_model=deepgram_model,
+            whisper_device=whisper_device,
             deepgram_client=deepgram_client,
             progress=progress,
             cancel=cancel,
@@ -471,6 +496,8 @@ def transcribe_ranges(
     engine: str = "deepgram",
     deepgram_key: str = "",
     whisper_model: str = "small",
+    deepgram_model: str | None = None,
+    whisper_device: str = "auto",
     deepgram_client: DeepgramClient | None = None,
     progress: ProgressCallback | None = None,
     cancel: Callable[[], bool] | None = None,
@@ -528,6 +555,8 @@ def transcribe_ranges(
                 engine=engine,
                 deepgram_key=deepgram_key,
                 whisper_model=whisper_model,
+                deepgram_model=deepgram_model,
+                whisper_device=whisper_device,
                 deepgram_client=deepgram_client,
                 progress=_range_progress,
                 cancel=cancel,

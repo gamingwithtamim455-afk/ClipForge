@@ -17,14 +17,11 @@ Transcription / discovery itself is a later milestone.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QPushButton,
-    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -32,7 +29,7 @@ from PySide6.QtWidgets import (
 
 from ..i18n import t
 from .timeline import TimelineWidget
-from .widgets import Badge, thumbnail_pixmap
+from .widgets import Badge, VideoPlayerWidget
 
 #: (label, app language code) — Auto first, as in the spec.
 LANGUAGES: list[tuple[str, str]] = [
@@ -164,34 +161,12 @@ class ViralClipsPage(QWidget):
         header.addWidget(Badge(t("player.face_tracking_badge"), parent=self))
         layout.addLayout(header)
 
-        # 9:16 preview area (placeholder art until a video is loaded).
-        self._preview = QLabel(self)
-        self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview.setFixedSize(270, 480)
-        self._preview.setPixmap(self._preview_pixmap())
-        preview_row = QHBoxLayout()
-        preview_row.addStretch(1)
-        preview_row.addWidget(self._preview)
-        preview_row.addStretch(1)
-        layout.addLayout(preview_row, 1)
-
-        transport = QHBoxLayout()
-        self._play_btn = QPushButton("▶", self)
-        self._play_btn.setFlat(True)
-        self._play_btn.setEnabled(False)
-        transport.addWidget(self._play_btn)
-        self._seek = QSlider(Qt.Orientation.Horizontal, self)
-        self._seek.setEnabled(False)
-        transport.addWidget(self._seek, 1)
-        self._time_label = QLabel("0:00 / 0:00", self)
-        self._time_label.setProperty("muted", True)
-        transport.addWidget(self._time_label)
-        layout.addLayout(transport)
+        # Real player (QMediaPlayer): the source video actually plays
+        # here, with working play/pause + seek. The previous panel was a
+        # static pixmap whose transport buttons were never connected.
+        self._player_widget = VideoPlayerWidget(self)
+        layout.addWidget(self._player_widget, 1)
         return panel
-
-    def _preview_pixmap(self) -> QPixmap:
-        pixmap = thumbnail_pixmap("preview", 270, 480)
-        return pixmap
 
     def _build_right_panel(self) -> QFrame:
         panel = QFrame(self)
@@ -272,16 +247,12 @@ class ViralClipsPage(QWidget):
             return (9, 16)
 
     def set_thumbnail(self, path: str) -> None:
-        """Show a real video frame in the 9:16 preview area."""
-        pixmap = QPixmap(path)
-        if not pixmap.isNull():
-            self._preview.setPixmap(
-                pixmap.scaled(
-                    270, 480,
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-            )
+        """Show a real video frame as the player's poster image."""
+        self._player_widget.set_poster(path)
+
+    def set_source(self, path: str) -> None:
+        """Load the source video into the player."""
+        self._player_widget.set_source(path)
 
     @property
     def manual_ranges(self) -> list:
@@ -309,9 +280,6 @@ class ViralClipsPage(QWidget):
     def set_video(self, duration: float, time_label: str) -> None:
         """Attach a loaded video (duration in seconds)."""
         self.timeline.set_duration(duration)
-        self._time_label.setText(f"0:00 / {time_label}")
-        self._play_btn.setEnabled(True)
-        self._seek.setEnabled(True)
 
     def set_status(self, text: str) -> None:
         self._status.setText(text)
@@ -322,10 +290,7 @@ class ViralClipsPage(QWidget):
         self.timeline.clear_ranges()
         self.timeline.set_clips([])
         self.timeline.set_duration(0.0)
-        self._preview.setPixmap(self._preview_pixmap())
-        self._time_label.setText("0:00 / 0:00")
-        self._play_btn.setEnabled(False)
-        self._seek.setEnabled(False)
+        self._player_widget.clear()
         self._clip_length.setEnabled(True)
         self._clips.setEnabled(True)
         self.set_status("")

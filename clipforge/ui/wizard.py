@@ -9,6 +9,8 @@ selected AND a language is chosen.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -22,7 +24,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.ffmpeg import probe
-from ..core.paths import app_data_dir
+from ..core.jobs import run_job
+from ..core.paths import app_data_dir, default_video_dir
 from ..core.projects import Project
 from ..core.thumbnails import generate_thumbnail
 from ..core.timeparse import format_timecode
@@ -70,7 +73,7 @@ class _SelectVideoPage(QWidget):
         path, _ = QFileDialog.getOpenFileName(
             self,
             t("wizard.select_video"),
-            "",
+            default_video_dir(),
             "Video files (*.mp4 *.mov *.mkv *.webm *.avi);;All files (*)",
         )
         if path:
@@ -190,6 +193,7 @@ class WizardPage(QWidget):
         self._select_video._info.setText("")
         self._viral.reset()
         self._edit.set_clips([])
+        self._edit.set_video_source("")
         self._render.set_pending_clips([])
         self._render.set_results([])
         self._status.setText("")
@@ -199,7 +203,24 @@ class WizardPage(QWidget):
         self.reset()
         self._project = project
         self._project_label.setText(project.name)
-        self.go_to_step(1 if self._video_path else 0)
+        # Opening a project must open the project: load its source video
+        # (probe + preview + Viral Clips step) and restore its saved clips
+        # on the timeline. Before this, set_project never loaded the
+        # source, so every project click landed back on Select Video and
+        # the user had to re-pick the file in a file browser.
+        source = project.source_path or ""
+        if source and Path(source).exists():
+            self._select_video.set_video(source)
+            if project.clips:
+                self._viral.timeline.set_clips(
+                    [
+                        (float(c["start"]), float(c["end"]))
+                        for c in project.clips
+                        if "start" in c and "end" in c
+                    ]
+                )
+        else:
+            self.go_to_step(0)
 
     def go_to_step(self, index: int) -> None:
         self._step = max(0, min(len(STEP_NAMES) - 1, index))
@@ -243,16 +264,30 @@ class WizardPage(QWidget):
         self._video_fps = info.fps or 30.0
         label = format_timecode(info.duration)
         self._viral.set_video(duration=info.duration, time_label=label)
+        self._viral.set_source(path)
+        self._edit.set_video_source(path)
         self._viral.timeline.set_duration(info.duration, self._video_fps)
-        # Real frame in the 9:16 preview (best effort — placeholder stays
-        # when the grab fails).
-        thumb = generate_thumbnail(
-            path, app_data_dir() / "thumbnails" / f"{self._project.id if self._project else 'preview'}.jpg"
-        )
-        if thumb:
-            self._viral.set_thumbnail(thumb)
-        self.video_probed.emit(path, info.duration, thumb or "")
+        self.video_probed.emit(path, info.duration, "")
         self.go_to_step(1)
+        # Real frame in the 9:16 preview, grabbed in a background job —
+        # an ffmpeg frame grab can take a second or two and must not
+        # freeze the UI on every video pick (best effort: the placeholder
+        # stays when the grab fails).
+        thumb_target = (
+            app_data_dir() / "thumbnails"
+            / f"{self._project.id if self._project else 'preview'}.jpg"
+        )
+
+        def _grab(_ctx, _path=path, _target=thumb_target) -> str:
+            return generate_thumbnail(_path, _target)
+
+        def _thumb_done(thumb: object) -> None:
+            if thumb and self._video_path == path:
+                self._viral.set_thumbnail(str(thumb))
+                # Re-emit so the app stores the thumbnail on the project.
+                self.video_probed.emit(path, info.duration, str(thumb))
+
+        run_job(_grab, on_finished=_thumb_done, parent=self)
 
     def set_running(self, running: bool) -> None:
         """While a pipeline job runs, Start becomes Cancel."""

@@ -49,7 +49,7 @@ def test_migrate_store_data_is_idempotent() -> None:
 
 def test_v2_roundtrip_keeps_clips_and_status(tmp_path) -> None:
     path = tmp_path / "projects.json"
-    store = ProjectStore(path)  # seeds samples on first run
+    store = ProjectStore(path)  # fresh store starts empty (no seeding)
     project = Project(
         name="clip-test",
         source_path="/tmp/clip.mp4",
@@ -76,7 +76,7 @@ def test_corrupt_store_is_backed_up_and_reset(tmp_path) -> None:
     path = _write_store(tmp_path, {"version": 2, "projects": []})
     path.write_text("{not json", encoding="utf-8")
     store = ProjectStore(path)
-    assert store.projects, "corrupt store falls back to the seeded samples"
+    assert store.projects == [], "corrupt store falls back to an empty store"
     assert path.with_suffix(".corrupt.json").exists()
 
 

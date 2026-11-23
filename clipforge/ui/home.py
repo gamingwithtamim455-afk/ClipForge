@@ -11,7 +11,9 @@ Matches the reference recording (FaceClip home):
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from pathlib import Path
+
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -24,10 +26,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.jobs import run_job
+from ..core.paths import app_data_dir
 from ..core.projects import Project, ProjectStore
+from ..core.thumbnails import generate_thumbnail
 from ..i18n import t
 from .splash import SidebarBranding
 from .widgets import ProjectCard
+
+#: Minimum card width the grid aims for; the column count follows the
+#: window width instead of being hard-coded.
+CARD_MIN_WIDTH = 176
+GRID_SPACING = 12
 
 
 class HomePage(QWidget):
@@ -44,6 +54,9 @@ class HomePage(QWidget):
         self._store = store
         self._branding_photo = branding_photo
         self._cards: list[ProjectCard] = []
+        self._projects: list[Project] = []
+        self._columns = 0
+        self._thumb_job_running = False
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -142,29 +155,120 @@ class HomePage(QWidget):
         self._grid_widget = QWidget(self)
         self._grid_layout = QGridLayout(self._grid_widget)
         self._grid_layout.setContentsMargins(0, 0, 0, 0)
-        self._grid_layout.setHorizontalSpacing(12)
+        self._grid_layout.setHorizontalSpacing(GRID_SPACING)
         self._grid_layout.setVerticalSpacing(8)
         self._grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         scroll = QScrollArea(self)
         scroll.setWidget(self._grid_widget)
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll = scroll
+        # The viewport reaches its real width only after the page's own
+        # resizeEvent, so reflow is driven from the viewport's resize.
+        scroll.viewport().installEventFilter(self)
         return scroll
 
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt override
+        if (
+            watched is self._scroll.viewport()
+            and event.type() == QEvent.Type.Resize
+            and self._cards
+            and self._column_count() != self._columns
+        ):
+            self._relayout()
+        return super().eventFilter(watched, event)
+
     # -- data ------------------------------------------------------------
+    def _column_count(self) -> int:
+        """Columns that fit the current viewport width (at least 1)."""
+        width = 0
+        if hasattr(self, "_scroll"):
+            width = self._scroll.viewport().width()
+        if width <= 0:
+            width = max(self.width(), CARD_MIN_WIDTH)
+        return max(1, (width + GRID_SPACING) // (CARD_MIN_WIDTH + GRID_SPACING))
+
+    def _relayout(self) -> None:
+        """Place the current cards into a grid with the right column count.
+
+        The old layout hard-coded 5 columns with no stretch, so cards were
+        clipped at the right edge, squeezed into strips, and the area grew
+        a horizontal scrollbar. Columns now follow the window width and
+        share the available space equally.
+        """
+        columns = self._column_count()
+        self._columns = columns
+        for card in self._cards:
+            self._grid_layout.removeWidget(card)
+        for index, card in enumerate(self._cards):
+            self._grid_layout.addWidget(card, index // columns, index % columns)
+        for col in range(columns):
+            self._grid_layout.setColumnStretch(col, 1)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        if self._cards and self._column_count() != self._columns:
+            self._relayout()
+
     def refresh(self) -> None:
         """Rebuild the grid from the store, honouring the search box."""
         query = self._search.text() if hasattr(self, "_search") else ""
         projects = self._store.search(query)
+        self._projects = projects
         for card in self._cards:
             card.deleteLater()
         self._cards = []
-        for index, project in enumerate(projects):
+        for project in projects:
             card = ProjectCard(project, self._grid_widget)
             card.clicked.connect(lambda _pid, p=project: self.project_opened.emit(p))
-            self._grid_layout.addWidget(card, index // 5, index % 5)
             self._cards.append(card)
+        self._relayout()
         self._count_badge.setText(str(len(self._store.projects)))
+        self._queue_thumbnail_repairs(projects)
+
+    def _queue_thumbnail_repairs(self, projects: list[Project]) -> None:
+        """Generate missing thumbnails in the background (Home B1 fix).
+
+        A card only shows a real frame when ``project.thumbnail`` exists;
+        projects whose wizard probe never produced one kept the placeholder
+        forever. Repair them here, off the UI thread, and refresh once.
+        """
+        if self._thumb_job_running:
+            return
+        missing = [
+            p for p in projects
+            if p.source_path
+            and Path(p.source_path).exists()
+            and not (p.thumbnail and Path(p.thumbnail).exists())
+        ]
+        if not missing:
+            return
+        self._thumb_job_running = True
+
+        def _work(_ctx, _missing=missing) -> dict:
+            made: dict[str, str] = {}
+            for project in _missing:
+                target = app_data_dir() / "thumbnails" / f"{project.id}.jpg"
+                got = generate_thumbnail(project.source_path, target)
+                if got:
+                    made[project.id] = got
+            return made
+
+        def _done(made: object) -> None:
+            self._thumb_job_running = False
+            if not made:
+                return
+            for project in self._store.projects:
+                if project.id in made:  # type: ignore[operator]
+                    project.thumbnail = made[project.id]  # type: ignore[index]
+            self._store.save()
+            self.refresh()
+
+        def _failed(_error: str) -> None:
+            self._thumb_job_running = False
+
+        run_job(_work, on_finished=_done, on_failed=_failed, parent=self)
 
     def retranslate(self) -> None:
         """Re-apply translated strings (called after an app-language change)."""

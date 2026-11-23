@@ -50,7 +50,7 @@ from ..core.timeparse import format_timecode, parse_timecode
 from ..core.transcription import Word
 from ..i18n import t
 from .timeline import TimelineWidget
-from .widgets import thumbnail_pixmap
+from .widgets import VideoPlayerWidget
 
 
 class EditPage(QWidget):
@@ -78,6 +78,7 @@ class EditPage(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._video_source: str = ""
         self._clips: list[EditableClip] = []
         self._video_duration: float = 0.0
         self._selected: int | None = None
@@ -107,22 +108,16 @@ class EditPage(QWidget):
         left_layout.addWidget(self._clip_list)
         body.addWidget(left, 0)
 
-        # Center: preview.
+        # Center: preview — the real player over the source video;
+        # selecting a clip seeks to its range and plays just that range.
         center = QFrame(self)
         center.setProperty("panel", True)
         center_layout = QVBoxLayout(center)
         preview_title = QLabel(t("player.title"), self)
         preview_title.setProperty("title", True)
         center_layout.addWidget(preview_title)
-        preview = QLabel(self)
-        preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        preview.setFixedSize(270, 480)
-        preview.setPixmap(thumbnail_pixmap("edit-preview", 270, 480))
-        preview_row = QHBoxLayout()
-        preview_row.addStretch(1)
-        preview_row.addWidget(preview)
-        preview_row.addStretch(1)
-        center_layout.addLayout(preview_row, 1)
+        self._player_widget = VideoPlayerWidget(self)
+        center_layout.addWidget(self._player_widget, 1)
         body.addWidget(center, 1)
 
         # Right: caption preset + clip editor (scrollable).
@@ -581,11 +576,23 @@ class EditPage(QWidget):
             )
             self.clips_changed.emit()
 
+    def set_video_source(self, path: str) -> None:
+        """Load the source video into the preview player."""
+        self._video_source = path
+        if path:
+            self._player_widget.set_source(path)
+        else:
+            self._player_widget.clear()
+
     def _on_clip_selected(self, row: int) -> None:
         if 0 <= row < len(self._clips):
             self._selected = row
             self._show_error("")
             self._refresh_editor()
+            clip = self._clips[row]
+            if getattr(self, "_video_source", ""):
+                # Preview exactly this clip's range of the source.
+                self._player_widget.set_play_range(clip.start, clip.end)
 
     def _on_apply_trim(self) -> None:
         clip = self._selected_clip()

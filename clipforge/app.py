@@ -29,7 +29,7 @@ from .core.app_logging import setup_logging
 from .core.backups import maybe_weekly_backup
 from .core.branding import branding_photo_path
 from .core.jobs import Job, run_job
-from .core.paths import app_data_dir
+from .core.paths import app_data_dir, default_video_dir
 from .core.pipeline import (
     PipelineConfig,
     PipelineResult,
@@ -110,7 +110,7 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self,
             t("wizard.select_video"),
-            "",
+            default_video_dir(),
             "Video files (*.mp4 *.mov *.mkv *.webm *.avi);;All files (*)",
         )
         if not path:
@@ -144,14 +144,23 @@ class MainWindow(QMainWindow):
     def _build_pipeline_config(self) -> PipelineConfig:
         wizard = self._wizard
         viral = wizard._viral
+        from .providers.deepgram import model_id_for_label
+
+        accel = str(self._settings.get("accel_transcription"))
+        whisper_device = {"GPU": "cuda", "CPU": "cpu"}.get(accel, "auto")
         return PipelineConfig(
             video_path=wizard.video_path,
             language=viral.language_code or "auto",
             engine=str(self._settings.get("transcription_engine")),
+            deepgram_model=model_id_for_label(
+                str(self._settings.get("transcription_model"))
+            ),
+            whisper_device=whisper_device,
             clip_length=float(viral.clip_length),
             clips_requested=viral.clips_requested_count,
             manual_ranges=list(wizard.manual_ranges),
             captions=viral.captions_mode,
+            split_screen=bool(self._settings.get("split_screen")),
             quality=viral.quality,
             aspect=viral.aspect,
             accel=str(self._settings.get("accel_rendering")),

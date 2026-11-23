@@ -247,3 +247,65 @@ def test_no_internet_is_friendly(monkeypatch) -> None:
     status = client.validate_key()
     assert not status.connected
     assert status.message == "No internet connection — check your network"
+
+
+# ---------------------------------------------------------------------------
+# Multi-provider support (DeepSeek / OpenAI / Gemini / custom endpoints)
+# ---------------------------------------------------------------------------
+
+def test_openai_base_url_keeps_v1() -> None:
+    """OpenAI's /v1 must NOT be stripped (the old normalizer broke it)."""
+    from clipforge.providers.deepseek import normalize_base_url
+
+    assert normalize_base_url("https://api.openai.com/v1") == "https://api.openai.com/v1"
+    assert normalize_base_url("https://api.openai.com/v1/") == "https://api.openai.com/v1"
+    client = DeepSeekClient(base_url="https://api.openai.com/v1", api_key="<redacted>")
+    assert client.chat_url == "https://api.openai.com/v1/chat/completions"
+    assert client.models_url == "https://api.openai.com/v1/models"
+
+
+def test_gemini_base_url_and_models() -> None:
+    """Gemini's OpenAI-compatible endpoint: URL kept, /models listed live."""
+    session = FakeSession(
+        {("GET", "/models"): FakeResponse(200, {"data": [{"id": "gemini-2.5-flash"}]})}
+    )
+    client = DeepSeekClient(
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        api_key="<redacted>", session=session, backoff_base=0,
+    )
+    assert client.chat_url == (
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    )
+    assert client.list_models() == ["gemini-2.5-flash"]
+
+
+def test_non_deepseek_chat_body_has_no_deepseek_thinking_fields() -> None:
+    """OpenAI/Gemini must not receive DeepSeek's thinking parameters."""
+    session = FakeSession(
+        {("POST", "/chat/completions"): FakeResponse(200, {"choices": [{"message": {"content": "hi"}}]})}
+    )
+    client = DeepSeekClient(
+        base_url="https://api.openai.com/v1", api_key="<redacted>",
+        session=session, backoff_base=0,
+    )
+    assert client.chat_text([{"role": "user", "content": "x"}], thinking=True) == "hi"
+    body = session.calls[0]["json"]
+    assert "thinking" not in body
+    assert "reasoning_effort" not in body
+
+
+def test_deepgram_model_choice_reaches_listen_params() -> None:
+    """Settings > Transcription model (Nova-2) must reach the API call."""
+    from clipforge.providers.deepgram import build_listen_params, model_id_for_label
+
+    assert model_id_for_label("Nova-3") == "nova-3"
+    assert model_id_for_label("Nova-2") == "nova-2"
+    assert model_id_for_label("Enhanced") == "enhanced"
+    assert build_listen_params("en", model="nova-2")["model"] == "nova-2"
+    assert build_listen_params("en")["model"] == "nova-3"  # preset default
+
+    session = FakeSession({("POST", "/v1/listen"): FakeResponse(200, {"results": {}})})
+    client = DeepgramClient(api_key="<redacted>", model="nova-2",
+                            session=session, backoff_base=0)
+    client.transcribe_chunk(b"wav-bytes", language="en")
+    assert session.calls[0]["params"]["model"] == "nova-2"
