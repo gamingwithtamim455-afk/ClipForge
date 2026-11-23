@@ -1,1 +1,173 @@
-IiIiVUkgdGVzdHMgKG9mZnNjcmVlbik6IG1hbnVhbCB0aW1lbGluZSByYW5nZXMsIG1hbnVhbC1tb2RlIGRpc2FibGluZywKRWRpdC1zdGVwIHJhbmdlcywgUmVuZGVyLXN0ZXAgY2FwdGlvbnMgKyBDb3B5LiIiIgoKaW1wb3J0IHB5dGVzdAoKZnJvbSBjbGlwZm9yZ2UuYXBwIGltcG9ydCBjcmVhdGVfYXBwCmZyb20gY2xpcGZvcmdlLmNvcmUucmFuZ2VzIGltcG9ydCBDbGlwUmFuZ2UKZnJvbSBjbGlwZm9yZ2UuY29yZS5yZW5kZXIgaW1wb3J0IENsaXBSZXN1bHQsIFJlbmRlckpvYiwgUmVuZGVyU2V0dGluZ3MKZnJvbSBjbGlwZm9yZ2UudWkuZWRpdCBpbXBvcnQgRWRpdFBhZ2UKZnJvbSBjbGlwZm9yZ2UudWkucmVuZGVyIGltcG9ydCBSZW5kZXJQYWdlCmZyb20gY2xpcGZvcmdlLnVpLnRpbWVsaW5lIGltcG9ydCBUaW1lbGluZVdpZGdldAoKCkBweXRlc3QuZml4dHVyZShzY29wZT0ibW9kdWxlIikKZGVmIHdpbmRvdygpOgogICAgYXBwLCB3aW4gPSBjcmVhdGVfYXBwKCkKICAgIHlpZWxkIHdpbgogICAgYXBwLnF1aXQoKQoKCkBweXRlc3QuZml4dHVyZSgpCmRlZiB0aW1lbGluZSh3aW5kb3cpOgogICAgd2lkZ2V0ID0gVGltZWxpbmVXaWRnZXQod2luZG93KQogICAgd2lkZ2V0LnNldF9kdXJhdGlvbigzMDAuMCwgZnBzPTMwLjApCiAgICByZXR1cm4gd2lkZ2V0CgoKIyAtLSBtYW51YWwgcmFuZ2VzIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCmRlZiB0ZXN0X2FkZF9yYW5nZV9jcmVhdGVzX3Jvdyh0aW1lbGluZSkgLT4gTm9uZToKICAgIGFzc2VydCB0aW1lbGluZS5hZGRfcmFuZ2UoKQogICAgYXNzZXJ0IGxlbih0aW1lbGluZS5tYW51YWxfcmFuZ2VzKCkpID09IDEKICAgIGFzc2VydCB0aW1lbGluZS5oYXNfbWFudWFsX3JhbmdlcygpCiAgICBhc3NlcnQgbGVuKHRpbWVsaW5lLl9yb3dzKSA9PSAxCiAgICBybmcgPSB0aW1lbGluZS5tYW51YWxfcmFuZ2VzKClbMF0KICAgIGFzc2VydCBybmcuc3RhcnQgPT0gMC4wIGFuZCBybmcuZW5kID09IDMwLjAKCgpkZWYgdGVzdF9hZGRfcmFuZ2VfcmVxdWlyZXNfdmlkZW8oKSAtPiBOb25lOgogICAgd2lkZ2V0ID0gVGltZWxpbmVXaWRnZXQoKQogICAgYXNzZXJ0IG5vdCB3aWRnZXQuYWRkX3JhbmdlKCkgICMgZHVyYXRpb24gMAogICAgYXNzZXJ0IHdpZGdldC5tYW51YWxfcmFuZ2VzKCkgPT0gW10KCgpkZWYgdGVzdF9hZGRfcmFuZ2VfbWF4X3R3ZW50eSh0aW1lbGluZSkgLT4gTm9uZToKICAgIGZvciBfIGluIHJhbmdlKDIwKToKICAgICAgICBhc3NlcnQgdGltZWxpbmUuYWRkX3JhbmdlKCkKICAgIGFzc2VydCBub3QgdGltZWxpbmUuYWRkX3JhbmdlKCkKICAgIGFzc2VydCBsZW4odGltZWxpbmUubWFudWFsX3JhbmdlcygpKSA9PSAyMAoKCmRlZiB0ZXN0X21hbnVhbF9tb2RlX3NpZ25hbCh0aW1lbGluZSkgLT4gTm9uZToKICAgIHNlZW46IGxpc3RbYm9vbF0gPSBbXQogICAgdGltZWxpbmUubWFudWFsX21vZGVfY2hhbmdlZC5jb25uZWN0KHNlZW4uYXBwZW5kKQogICAgdGltZWxpbmUuYWRkX3JhbmdlKCkKICAgIGFzc2VydCBzZWVuID09IFtUcnVlXQogICAgdGltZWxpbmUuY2xlYXJfcmFuZ2VzKCkKICAgIGFzc2VydCBzZWVuID09IFtUcnVlLCBGYWxzZV0KCgpkZWYgdGVzdF9yYW5nZV92YWxpZGF0aW9uX3Nob3duX2luX3dpZGdldCh0aW1lbGluZSkgLT4gTm9uZToKICAgIHRpbWVsaW5lLnNldF9yYW5nZXMoW0NsaXBSYW5nZSgzMC4wLCA3MC4wKSwgQ2xpcFJhbmdlKDYwLjAsIDEwMC4wKV0pCiAgICBhc3NlcnQgbm90IHRpbWVsaW5lLnZhbGlkYXRpb24uaXNfdmFsaWQKICAgIGFzc2VydCBub3QgdGltZWxpbmUuX2Vycm9yX2xhYmVsLmlzSGlkZGVuKCkKICAgIGFzc2VydCAib3ZlcmxhcHMiIGluIHRpbWVsaW5lLl9lcnJvcl9sYWJlbC50ZXh0KCkKICAgIHRpbWVsaW5lLnNldF9yYW5nZXMoW0NsaXBSYW5nZSgzMC4wLCA3MC4wKV0pCiAgICBhc3NlcnQgdGltZWxpbmUudmFsaWRhdGlvbi5pc192YWxpZAogICAgYXNzZXJ0IHRpbWVsaW5lLl9lcnJvcl9sYWJlbC5pc0hpZGRlbigpCgoKZGVmIHRlc3RfcmFuZ2VfbG9uZ193YXJuaW5nX3Nob3duKHRpbWVsaW5lKSAtPiBOb25lOgogICAgdGltZWxpbmUuc2V0X3JhbmdlcyhbQ2xpcFJhbmdlKDAuMCwgOTAuMCldKQogICAgYXNzZXJ0IHRpbWVsaW5lLnZhbGlkYXRpb24uaXNfdmFsaWQKICAgIGFzc2VydCBub3QgdGltZWxpbmUuX3dhcm5pbmdfbGFiZWwuaXNIaWRkZW4oKQogICAgYXNzZXJ0ICJsb25nZXIgdGhhbiA2MHMiIGluIHRpbWVsaW5lLl93YXJuaW5nX2xhYmVsLnRleHQoKQoKCmRlZiB0ZXN0X2RlbGV0ZV9yYW5nZSh0aW1lbGluZSkgLT4gTm9uZToKICAgIHRpbWVsaW5lLnNldF9yYW5nZXMoW0NsaXBSYW5nZSgwLjAsIDMwLjApLCBDbGlwUmFuZ2UoNjAuMCwgOTAuMCldKQogICAgdGltZWxpbmUuZGVsZXRlX3JhbmdlKDApCiAgICBhc3NlcnQgbGVuKHRpbWVsaW5lLm1hbnVhbF9yYW5nZXMoKSkgPT0gMQogICAgYXNzZXJ0IHRpbWVsaW5lLm1hbnVhbF9yYW5nZXMoKVswXS5zdGFydCA9PSA2MC4wCgoKZGVmIHRlc3Rfc25hcF90aW1lX3RvX2ZyYW1lX2dyaWQodGltZWxpbmUpIC0+IE5vbmU6CiAgICBhc3NlcnQgdGltZWxpbmUuc25hcF90aW1lKDEuMCkgPT0gMS4wCiAgICBhc3NlcnQgdGltZWxpbmUuc25hcF90aW1lKDEuMDEpID09IDEuMCAgIyAzMCBmcHMgZ3JpZDogMC4wMzMgc3RlcHMKICAgIGFzc2VydCB0aW1lbGluZS5zbmFwX3RpbWUoMS4wMikgPT0gMS4wMyBvciB0aW1lbGluZS5zbmFwX3RpbWUoMS4wMikgPT0gMS4wCgoKZGVmIHRlc3Rfc2V0X3Jhbmdlc19yZXBsYWNlcyh0aW1lbGluZSkgLT4gTm9uZToKICAgIHRpbWVsaW5lLnNldF9yYW5nZXMoW0NsaXBSYW5nZSgxMC4wLCAyMC4wKV0pCiAgICBhc3NlcnQgbGVuKHRpbWVsaW5lLl9yb3dzKSA9PSAxCiAgICB0aW1lbGluZS5zZXRfcmFuZ2VzKFtdKQogICAgYXNzZXJ0IHRpbWVsaW5lLl9yb3dzID09IFtdCiAgICBhc3NlcnQgbm90IHRpbWVsaW5lLmhhc19tYW51YWxfcmFuZ2VzKCkKCgojIC0tIG1hbnVhbCBtb2RlIGRpc2FibGVzIEFJIGNvbnRyb2xzIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KZGVmIHRlc3RfbWFudWFsX21vZGVfZGlzYWJsZXNfY2xpcF9jb250cm9scyh3aW5kb3cpIC0+IE5vbmU6CiAgICBpZiBub3Qgd2luZG93Ll9zdG9yZS5wcm9qZWN0czoKICAgICAgICAjIEEgZnJlc2ggc3RvcmUgc3RhcnRzIGVtcHR5IChmYWtlIHNhbXBsZSBzZWVkaW5nIHdhcyByZW1vdmVkKTsKICAgICAgICAjIHRoaXMgdGVzdCBjcmVhdGVzIGl0cyBvd24gcHJvamVjdCBpbnN0ZWFkIG9mIHJlbHlpbmcgb24gb25lLgogICAgICAgIGZyb20gY2xpcGZvcmdlLmNvcmUucHJvamVjdHMgaW1wb3J0IFByb2plY3QKCiAgICAgICAgd2luZG93Ll9zdG9yZS5hZGQoUHJvamVjdChuYW1lPSJUaW1lbGluZSB0ZXN0Iiwgc291cmNlX3BhdGg9InZpZGVvLm1wNCIpKQogICAgd2luZG93Ll9vcGVuX3Byb2plY3Qod2luZG93Ll9zdG9yZS5wcm9qZWN0c1swXSkKICAgIHdpbmRvdy5fd2l6YXJkLmdvX3RvX3N0ZXAoMSkKICAgIHZpcmFsID0gd2luZG93Ll93aXphcmQuX3ZpcmFsCiAgICB2aXJhbC50aW1lbGluZS5zZXRfZHVyYXRpb24oMzAwLjAsIGZwcz0zMC4wKQogICAgYXNzZXJ0IHZpcmFsLl9jbGlwX2xlbmd0aC5pc0VuYWJsZWQoKQogICAgYXNzZXJ0IHZpcmFsLl9jbGlwcy5pc0VuYWJsZWQoKQogICAgdmlyYWwudGltZWxpbmUuYWRkX3JhbmdlKCkKICAgIGFzc2VydCBub3QgdmlyYWwuX2NsaXBfbGVuZ3RoLmlzRW5hYmxlZCgpCiAgICBhc3NlcnQgbm90IHZpcmFsLl9jbGlwcy5pc0VuYWJsZWQoKQogICAgYXNzZXJ0IHZpcmFsLmhhc19tYW51YWxfcmFuZ2VzCiAgICBhc3NlcnQgbGVuKHZpcmFsLm1hbnVhbF9yYW5nZXMpID09IDEKICAgIGFzc2VydCAiTWFudWFsIHJhbmdlcyIgaW4gdmlyYWwuX3N0YXR1cy50ZXh0KCkKICAgIHZpcmFsLnRpbWVsaW5lLmNsZWFyX3JhbmdlcygpCiAgICBhc3NlcnQgdmlyYWwuX2NsaXBfbGVuZ3RoLmlzRW5hYmxlZCgpCiAgICBhc3NlcnQgdmlyYWwuX2NsaXBzLmlzRW5hYmxlZCgpCiAgICB3aW5kb3cuX3Nob3dfaG9tZSgpCgoKIyAtLSBFZGl0IHN0ZXAgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCmRlZiB0ZXN0X2VkaXRfcGFnZV9sb2Fkc19jbGlwc193aXRoX3FhX2ZsYWcod2luZG93KSAtPiBOb25lOgogICAgcGFnZSA9IEVkaXRQYWdlKHdpbmRvdykKICAgIHBhZ2Uuc2V0X2NsaXBzKAogICAgICAgIFtDbGlwUmFuZ2UoMC4wLCAzMC4wLCBsYWJlbD0iQ2xpcCAxIiksIENsaXBSYW5nZSg0MC4wLCA3MC4wLCBsYWJlbD0iQ2xpcCAyIildLAogICAgICAgIHFhX2ZsYWdzPXsxOiBUcnVlfSwKICAgICkKICAgIGFzc2VydCBwYWdlLl9jbGlwX2xpc3QuY291bnQoKSA9PSAyCiAgICBhc3NlcnQgInJldmlldyBmcmFtaW5nIiBpbiBwYWdlLl9jbGlwX2xpc3QuaXRlbSgxKS50ZXh0KCkKICAgIGFzc2VydCBwYWdlLl9wcmVzZXQuaXNFbmFibGVkKCkKICAgIGFzc2VydCBsZW4ocGFnZS50aW1lbGluZS5tYW51YWxfcmFuZ2VzKCkpID09IDIKCgojIC0tIFJlbmRlciBzdGVwIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KZGVmIF9yZXN1bHQoaW5kZXg6IGludCwgKiwgbGFiZWw6IGJvb2wgPSBUcnVlKSAtPiBDbGlwUmVzdWx0OgogICAgcmV0dXJuIENsaXBSZXN1bHQoCiAgICAgICAgaW5kZXg9aW5kZXgsCiAgICAgICAgdmlkZW9fcGF0aD1mIi90bXAvY2xpcHtpbmRleDowMmR9Lm1wNCIsCiAgICAgICAgbGFiZWxfcGF0aD1mIi90bXAve2luZGV4OjAyZH1fbGFiZWwudHh0IiBpZiBsYWJlbCBlbHNlICIiLAogICAgICAgIGR1cmF0aW9uPTMwLjAsCiAgICAgICAgY2FwdGlvbj0iR3JlYXQgY2xpcCEiIGlmIGxhYmVsIGVsc2UgIiIsCiAgICAgICAgaGFzaHRhZ3M9WyIjYSIsICIjYiIsICIjYyIsICIjZCJdIGlmIGxhYmVsIGVsc2UgW10sCiAgICAgICAgbGFiZWxfd3JpdHRlbj1sYWJlbCwKICAgICkKCgpkZWYgdGVzdF9yZW5kZXJfcGFnZV9zZXRfcmVzdWx0c19hbmRfY29weSh3aW5kb3cpIC0+IE5vbmU6CiAgICBmcm9tIFB5U2lkZTYuUXRHdWkgaW1wb3J0IFFHdWlBcHBsaWNhdGlvbgoKICAgIHBhZ2UgPSBSZW5kZXJQYWdlKHdpbmRvdykKICAgIHBhZ2Uuc2V0X3Jlc3VsdHMoW19yZXN1bHQoMSksIF9yZXN1bHQoMiwgbGFiZWw9RmFsc2UpXSkKICAgIGFzc2VydCBwYWdlLl9jbGlwX2xpc3QuY291bnQoKSA9PSAyCiAgICBwYWdlLl9jbGlwX2xpc3Quc2V0Q3VycmVudFJvdygwKQogICAgYXNzZXJ0ICJHcmVhdCBjbGlwISIgaW4gcGFnZS5fY2FwdGlvbl92aWV3LnRvUGxhaW5UZXh0KCkKICAgIGFzc2VydCAiI2EgI2IgI2MgI2QiIGluIHBhZ2UuX2NhcHRpb25fdmlldy50b1BsYWluVGV4dCgpCiAgICBhc3NlcnQgcGFnZS5fY29weV9idG4uaXNFbmFibGVkKCkKICAgIHBhZ2UuX29uX2NvcHlfY2xpY2tlZCgpCiAgICBhc3NlcnQgUUd1aUFwcGxpY2F0aW9uLmNsaXBib2FyZCgpLnRleHQoKSA9PSBwYWdlLl9jYXB0aW9uX3ZpZXcudG9QbGFpblRleHQoKQogICAgcGFnZS5fY2xpcF9saXN0LnNldEN1cnJlbnRSb3coMSkKICAgIGFzc2VydCBub3QgcGFnZS5fY29weV9idG4uaXNFbmFibGVkKCkgICMgbm8gbGFiZWwgb24gY2xpcCAyCgoKZGVmIHRlc3RfcmVuZGVyX3BhZ2VfcGVuZGluZ19jbGlwc19lbmFibGVfYnV0dG9uKHdpbmRvdykgLT4gTm9uZToKICAgIHBhZ2UgPSBSZW5kZXJQYWdlKHdpbmRvdykKICAgIGFzc2VydCBub3QgcGFnZS5fcmVuZGVyX2J0bi5pc0VuYWJsZWQoKQogICAgcGFnZS5zZXRfcGVuZGluZ19jbGlwcyhbCiAgICAgICAgUmVuZGVySm9iKCJ2aWRlby5tcDQiLCAwLjAsIDMwLjAsIGluZGV4PTEsIHNldHRpbmdzPVJlbmRlclNldHRpbmdzKCkpCiAgICBdKQogICAgYXNzZXJ0IHBhZ2UuX3JlbmRlcl9idG4uaXNFbmFibGVkKCkKICAgIGFzc2VydCAiMTA4MCDDlyAxOTIwIiBpbiBwYWdlLl9zdW1tYXJ5X3Jvd3NbIlJlc29sdXRpb24iXS50ZXh0KCkK
+"""UI tests (offscreen): manual timeline ranges, manual-mode disabling,
+Edit-step ranges, Render-step captions + Copy."""
+
+import pytest
+
+from clipforge.app import create_app
+from clipforge.core.ranges import ClipRange
+from clipforge.core.render import ClipResult, RenderJob, RenderSettings
+from clipforge.ui.edit import EditPage
+from clipforge.ui.render import RenderPage
+from clipforge.ui.timeline import TimelineWidget
+
+
+@pytest.fixture(scope="module")
+def window():
+    app, win = create_app()
+    yield win
+    app.quit()
+
+
+@pytest.fixture()
+def timeline(window):
+    widget = TimelineWidget(window)
+    widget.set_duration(300.0, fps=30.0)
+    return widget
+
+
+# -- manual ranges -----------------------------------------------------
+def test_add_range_creates_row(timeline) -> None:
+    assert timeline.add_range()
+    assert len(timeline.manual_ranges()) == 1
+    assert timeline.has_manual_ranges()
+    assert len(timeline._rows) == 1
+    rng = timeline.manual_ranges()[0]
+    assert rng.start == 0.0 and rng.end == 30.0
+
+
+def test_add_range_requires_video() -> None:
+    widget = TimelineWidget()
+    assert not widget.add_range()  # duration 0
+    assert widget.manual_ranges() == []
+
+
+def test_add_range_max_twenty(timeline) -> None:
+    for _ in range(20):
+        assert timeline.add_range()
+    assert not timeline.add_range()
+    assert len(timeline.manual_ranges()) == 20
+
+
+def test_manual_mode_signal(timeline) -> None:
+    seen: list[bool] = []
+    timeline.manual_mode_changed.connect(seen.append)
+    timeline.add_range()
+    assert seen == [True]
+    timeline.clear_ranges()
+    assert seen == [True, False]
+
+
+def test_range_validation_shown_in_widget(timeline) -> None:
+    timeline.set_ranges([ClipRange(30.0, 70.0), ClipRange(60.0, 100.0)])
+    assert not timeline.validation.is_valid
+    assert not timeline._error_label.isHidden()
+    assert "overlaps" in timeline._error_label.text()
+    timeline.set_ranges([ClipRange(30.0, 70.0)])
+    assert timeline.validation.is_valid
+    assert timeline._error_label.isHidden()
+
+
+def test_range_long_warning_shown(timeline) -> None:
+    timeline.set_ranges([ClipRange(0.0, 90.0)])
+    assert timeline.validation.is_valid
+    assert not timeline._warning_label.isHidden()
+    assert "longer than 60s" in timeline._warning_label.text()
+
+
+def test_delete_range(timeline) -> None:
+    timeline.set_ranges([ClipRange(0.0, 30.0), ClipRange(60.0, 90.0)])
+    timeline.delete_range(0)
+    assert len(timeline.manual_ranges()) == 1
+    assert timeline.manual_ranges()[0].start == 60.0
+
+
+def test_snap_time_to_frame_grid(timeline) -> None:
+    assert timeline.snap_time(1.0) == 1.0
+    assert timeline.snap_time(1.01) == 1.0  # 30 fps grid: 0.033 steps
+    assert timeline.snap_time(1.02) == 1.03 or timeline.snap_time(1.02) == 1.0
+
+
+def test_set_ranges_replaces(timeline) -> None:
+    timeline.set_ranges([ClipRange(10.0, 20.0)])
+    assert len(timeline._rows) == 1
+    timeline.set_ranges([])
+    assert timeline._rows == []
+    assert not timeline.has_manual_ranges()
+
+
+# -- manual mode disables AI controls ----------------------------------
+def test_manual_mode_disables_clip_controls(window) -> None:
+    if not window._store.projects:
+        # A fresh store starts empty (fake sample seeding was removed);
+        # this test creates its own project instead of relying on one.
+        from clipforge.core.projects import Project
+
+        window._store.add(Project(name="Timeline test", source_path="video.mp4"))
+    window._open_project(window._store.projects[0])
+    window._wizard.go_to_step(1)
+    viral = window._wizard._viral
+    viral.timeline.set_duration(300.0, fps=30.0)
+    assert viral._clip_length.isEnabled()
+    assert viral._clips.isEnabled()
+    viral.timeline.add_range()
+    assert not viral._clip_length.isEnabled()
+    assert not viral._clips.isEnabled()
+    assert viral.has_manual_ranges
+    assert len(viral.manual_ranges) == 1
+    assert "Manual ranges" in viral._status.text()
+    viral.timeline.clear_ranges()
+    assert viral._clip_length.isEnabled()
+    assert viral._clips.isEnabled()
+    window._show_home()
+
+
+# -- Edit step ---------------------------------------------------------
+def test_edit_page_loads_clips_with_qa_flag(window) -> None:
+    page = EditPage(window)
+    page.set_clips(
+        [ClipRange(0.0, 30.0, label="Clip 1"), ClipRange(40.0, 70.0, label="Clip 2")],
+        qa_flags={1: True},
+    )
+    assert page._clip_list.count() == 2
+    assert "review framing" in page._clip_list.item(1).text()
+    assert page._preset.isEnabled()
+    assert len(page.timeline.manual_ranges()) == 2
+
+
+# -- Render step -------------------------------------------------------
+def _result(index: int, *, label: bool = True) -> ClipResult:
+    return ClipResult(
+        index=index,
+        video_path=f"/tmp/clip{index:02d}.mp4",
+        label_path=f"/tmp/{index:02d}_label.txt" if label else "",
+        duration=30.0,
+        caption="Great clip!" if label else "",
+        hashtags=["#a", "#b", "#c", "#d"] if label else [],
+        label_written=label,
+    )
+
+
+def test_render_page_set_results_and_copy(window) -> None:
+    from PySide6.QtGui import QGuiApplication
+
+    page = RenderPage(window)
+    page.set_results([_result(1), _result(2, label=False)])
+    assert page._clip_list.count() == 2
+    page._clip_list.setCurrentRow(0)
+    assert "Great clip!" in page._caption_view.toPlainText()
+    assert "#a #b #c #d" in page._caption_view.toPlainText()
+    assert page._copy_btn.isEnabled()
+    page._on_copy_clicked()
+    assert QGuiApplication.clipboard().text() == page._caption_view.toPlainText()
+    page._clip_list.setCurrentRow(1)
+    assert not page._copy_btn.isEnabled()  # no label on clip 2
+
+
+def test_render_page_pending_clips_enable_button(window) -> None:
+    page = RenderPage(window)
+    assert not page._render_btn.isEnabled()
+    page.set_pending_clips([
+        RenderJob("video.mp4", 0.0, 30.0, index=1, settings=RenderSettings())
+    ])
+    assert page._render_btn.isEnabled()
+    assert "1080 × 1920" in page._summary_rows["Resolution"].text()
