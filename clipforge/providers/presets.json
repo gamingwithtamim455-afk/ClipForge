@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "deepseek": {
+    "default_base_url": "https://api.deepseek.com",
+    "default_model": "deepseek-flash",
+    "fallback_model": "deepseek-v4-pro",
+    "legacy_aliases": {
+      "deepseek-v4-flash": "deepseek-flash"
+    },
+    "chat_completions_path": "/chat/completions",
+    "models_path": "/models",
+    "thinking": {
+      "discovery": {"thinking": {"type": "enabled"}, "reasoning_effort": "high"},
+      "caption": {"thinking": {"type": "disabled"}}
+    }
+  },
+  "deepgram": {
+    "listen_url": "https://api.deepgram.com/v1/listen",
+    "projects_url": "https://api.deepgram.com/v1/projects",
+    "default_model": "nova-3",
+    "params": {
+      "smart_format": true,
+      "punctuate": true,
+      "utterances": true
+    },
+    "languages": {
+      "auto": null,
+      "bn": "nova-3",
+      "en": "nova-3",
+      "ar": "nova-3",
+      "ur": "nova-3",
+      "hi": "nova-3",
+      "es": "nova-3",
+      "fr": "nova-3",
+      "tr": "nova-3",
+      "id": "nova-3",
+      "pt": "nova-3",
+      "ru": "nova-3"
+    },
+    "chunk_seconds": 480,
+    "chunk_overlap_seconds": 5
+  },
+  "whisper_local": {
+    "default_model": "small",
+    "models": ["tiny", "base", "small", "medium", "large-v3"]
+  },
+  "updates": {
+    "repo": "clipforge/clipforge",
+    "releases_api": "https://api.github.com/repos/{repo}/releases/latest"
+  }
+}

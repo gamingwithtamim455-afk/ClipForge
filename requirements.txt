@@ -1,0 +1,20 @@
+# ClipForge — pinned runtime + build dependencies.
+# Python 3.12. Install with: pip install -r requirements.txt
+# Versions were resolved and verified on 2026-11-23 (Linux, Python 3.12.3).
+# Transitive dependencies are resolved by pip; only direct dependencies are
+# pinned here. See README.md for the full lock-file note.
+
+PySide6==6.12.0
+faster-whisper==1.2.1
+av==13.1.0  # faster-whisper 1.2.1 calls av.open(metadata_errors=...) — removed in av>=14, breaks local transcription
+opencv-python-headless==5.1.0.95
+scenedetect==0.7.3  # PySceneDetect — scene-cut detection for face tracking
+mediapipe==1.2.3
+keyring==25.7.0
+requests==2.34.2
+numpy==2.5.5
+pyyaml==6.0.3  # required by ctranslate2 / huggingface-hub (faster-whisper)
+tqdm==4.70.1  # Hugging Face download progress bars (Whisper first use)
+
+# Build-time (also pinned; used by the GitHub Actions Windows build)
+pyinstaller==6.22.3
