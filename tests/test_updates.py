@@ -302,9 +302,10 @@ def test_apply_update_happy_path(fake_feed, tmp_path) -> None:
     result = apply_update(
         _fake_info(fake_feed), app_dir=tmp_path,
         settings_snapshot={"appearance": "dark"}, projects_path=projects,
+        install_fn=lambda path: "installer_downloaded",  # stub: never launch the fake .exe
     )
     assert result.checksum_verified is True
-    assert result.outcome == "installer_downloaded"  # Linux: no .exe launch
+    assert result.outcome == "installer_downloaded"
     assert result.installer_path.read_bytes() == _FeedHandler.installer_bytes
     assert result.backup_path.exists()
     assert json.loads(projects.read_text())["version"] == 2
@@ -343,3 +344,4 @@ def test_apply_update_install_failure_rolls_back(fake_feed, tmp_path) -> None:
             install_fn=_failing_install,
         )
     assert projects.read_text() == original
+
