@@ -12,6 +12,7 @@ from clipforge.core.face_tracking import FaceBox, track_faces
 from clipforge.core.ffmpeg import find_ffmpeg, probe
 from clipforge.core.render import (
     RenderError,
+    _escape_filter_arg,
     RenderJob,
     RenderSettings,
     cleanup_clipforge_temp,
@@ -397,7 +398,8 @@ def _render_ass_frame(tmp_path, ass_text: str, *, at: float) -> bytes:
             find_ffmpeg(), "-y", "-v", "error",
             "-f", "lavfi", "-i", "color=c=black:s=1080x1920:r=30:d=2",
             "-vf",
-            f"ass={ass_path}:fontsdir={fonts_dir()}",
+            f"ass={_escape_filter_arg(str(ass_path))}"
+            f":fontsdir={_escape_filter_arg(str(fonts_dir()))}",
             "-ss", str(at), "-frames:v", "1",
             "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
         ],
@@ -443,3 +445,4 @@ def test_keyword_boxes_render_yellow_and_magenta(tmp_path) -> None:
     # t=0.5: "quick" in the yellow Box; t=1.0: "brown" in the magenta Box2.
     assert _count_yellow(_render_ass_frame(tmp_path, ass, at=0.5)) > 1000
     assert _count_magenta(_render_ass_frame(tmp_path, ass, at=1.0)) > 1000
+
