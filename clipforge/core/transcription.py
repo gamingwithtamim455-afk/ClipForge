@@ -305,6 +305,7 @@ def _transcribe_with_whisper(
     model_size: str,
     progress: ProgressCallback | None,
     device: str = "auto",
+    cancel: Callable[[], bool] | None = None,
 ) -> Transcript:
     """Run local faster-whisper over the whole WAV file."""
     if progress is not None:
@@ -312,13 +313,30 @@ def _transcribe_with_whisper(
     client = WhisperLocalClient(model_size=model_size, device=device)
     # The first-use model download occupies the first 30% of this phase;
     # the status line shows its real percent + MB. When the model is
-    # already cached the download callback is never invoked (no bar).
+    # already cached the download callback is never invoked (no bar) and
+    # segment progress uses the full 0-100 range instead. Segment
+    # progress + cancel are polled per segment by the client (v0.2.1:
+    # previously this reported 0% then 100% and ignored cancel for the
+    # whole file, which is why the bar froze at 5% and Cancel hung).
+    download_ran = {"ran": False}
+
+    def _download_progress(p: int, m: str) -> None:
+        download_ran["ran"] = True
+        if progress is not None:
+            progress(int(p * 0.3), m)
+
+    def _segment_progress(p: int, m: str) -> None:
+        if progress is not None:
+            if download_ran["ran"]:
+                progress(30 + int(p * 0.7), m)
+            else:
+                progress(p, m)
+
     result = client.transcribe(
         wav_path, language=None if language == "auto" else language,
-        download_progress=(
-            (lambda p, m: progress(int(p * 0.3), m))
-            if progress is not None else None
-        ),
+        download_progress=_download_progress if progress is not None else None,
+        progress=_segment_progress if progress is not None else None,
+        cancel=cancel,
     )
     transcript = parse_whisper_result(result)
     transcript.language = language
@@ -371,7 +389,7 @@ def transcribe_audio(
     if engine == "whisper_local":
         return _transcribe_with_whisper(
             wav_path, language=language, model_size=whisper_model,
-            progress=progress, device=whisper_device,
+            progress=progress, device=whisper_device, cancel=cancel,
         )
     if not deepgram_key and deepgram_client is None:
         # No key at all is NOT an error: the app must fully work with zero
@@ -380,7 +398,7 @@ def transcribe_audio(
         # loud error below and is never silently worked around.
         fallback = _transcribe_with_whisper(
             wav_path, language=language, model_size=whisper_model,
-            progress=progress, device=whisper_device,
+            progress=progress, device=whisper_device, cancel=cancel,
         )
         fallback.used_fallback = True
         fallback.note = (
@@ -414,7 +432,7 @@ def transcribe_audio(
             # language / server trouble) — fall back to local Whisper.
             fallback = _transcribe_with_whisper(
                 wav_path, language=language, model_size=whisper_model,
-                progress=progress, device=whisper_device,
+                progress=progress, device=whisper_device, cancel=cancel,
             )
             fallback.used_fallback = True
             fallback.note = (
@@ -430,7 +448,7 @@ def transcribe_audio(
         # same fallback, same status-line note.
         fallback = _transcribe_with_whisper(
             wav_path, language=language, model_size=whisper_model,
-            progress=progress, device=whisper_device,
+            progress=progress, device=whisper_device, cancel=cancel,
         )
         fallback.used_fallback = True
         fallback.note = (

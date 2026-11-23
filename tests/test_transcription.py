@@ -215,7 +215,7 @@ class FakeWhisperClient:
         pass
 
     def transcribe(self, audio_path: str, *, language=None,
-                   download_progress=None) -> dict:
+                   download_progress=None, progress=None, cancel=None) -> dict:
         return {
             "words": [{"text": "local", "start": 0.0, "end": 0.5, "confidence": 1.0}],
             "utterances": [{"text": "local", "start": 0.0, "end": 0.5}],

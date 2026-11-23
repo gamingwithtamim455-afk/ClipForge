@@ -96,13 +96,20 @@ def _make_faceless_clip(tmp_path) -> str:
     return path
 
 
-def test_track_faces_faceless_clip_falls_back_to_blur_fit(tmp_path) -> None:
+def test_track_faces_faceless_clip_falls_back_to_centred_fill(tmp_path) -> None:
+    """No face anywhere -> centred FILL crop (v0.2.1 B).
+
+    The old "blur-fit" fallback fitted the whole 16:9 picture inside
+    the 9:16 canvas over a blurred background (letterboxed output);
+    the fallback is now a plain centred crop path the renderer scales
+    to fill the frame, flagged for review in the Edit step.
+    """
     path = _make_faceless_clip(tmp_path)
     result = track_faces(path, start=0.0, end=3.0)
-    assert result.mode == "blur-fit"
+    assert result.mode == "track"
     assert result.fallback_fraction == 1.0
     assert result.qa_passed
-    assert not result.needs_review
+    assert result.needs_review
     assert len(result.times) == 15  # 3 s at 5 fps
     # 9:16 crop of a 640x360 frame: width 202, height 360, centered.
     box = result.boxes[0]
@@ -116,3 +123,23 @@ def test_track_faces_rejects_bad_range(tmp_path) -> None:
     path = _make_faceless_clip(tmp_path)
     with pytest.raises(ValueError):
         track_faces(path, start=2.0, end=2.0)
+
+
+def test_track_faces_cancel_aborts_scan(tmp_path) -> None:
+    """D: a cancel during the scan aborts it instead of finishing it."""
+    path = _make_faceless_clip(tmp_path)
+    with pytest.raises(RuntimeError, match="cancelled"):
+        track_faces(path, start=0.0, end=3.0, cancel=lambda: True)
+
+
+def test_track_faces_reports_progress(tmp_path) -> None:
+    """E: the scan reports a rising fraction so the bar keeps moving."""
+    path = _make_faceless_clip(tmp_path)
+    seen: list[float] = []
+    result = track_faces(
+        path, start=0.0, end=3.0, progress=lambda frac: seen.append(frac)
+    )
+    assert result is not None
+    assert seen, "no progress reported"
+    assert seen == sorted(seen)
+    assert seen[-1] == pytest.approx(1.0)

@@ -219,7 +219,8 @@ def test_transcribe_with_whisper_scales_download_to_first_30_percent(monkeypatch
         def __init__(self, model_size=None, device="auto"):
             pass
 
-        def transcribe(self, path, language=None, download_progress=None):
+        def transcribe(self, path, language=None, download_progress=None,
+                       progress=None, cancel=None):
             # Simulate a first-use download reporting 0-100%.
             if download_progress is not None:
                 download_progress(50, "Downloading Whisper model (small)… 50% — 1 MB of 2 MB")

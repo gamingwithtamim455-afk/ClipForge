@@ -9,9 +9,12 @@ Matches the reference recording:
 - Right panel "Clip & Framing": Aspect ratio 9:16, Subject Face Tracking,
   Quality 1080p.
 
-"Start clipping" is enabled only once a language is chosen; the page emits
-``readiness_changed`` so the wizard footer can enable/disable the button.
-Transcription / discovery itself is a later milestone.
+"Start clipping" is enabled once a language is chosen OR at least one
+manual timeline range exists — a manual cutout needs no transcription,
+so it must not be blocked by the language picker (with no language the
+pipeline transcribes with auto-detect, only when captions are burned).
+The page emits ``readiness_changed`` so the wizard footer can
+enable/disable the button.
 """
 
 from __future__ import annotations
@@ -64,6 +67,7 @@ class ViralClipsPage(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._ready = False
+        self._syncing_length = False  # Clip length <-> range sync guard
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -76,6 +80,15 @@ class ViralClipsPage(QWidget):
         center.addWidget(self._build_player_panel(), 1)
         self.timeline = TimelineWidget(self)
         self.timeline.manual_mode_changed.connect(self._on_manual_mode_changed)
+        # Bidirectional Clip length <-> selected range sync (v0.2.1 G):
+        # editing/selecting a manual range drives the Clip length value;
+        # editing Clip length resizes the selected range.
+        self.timeline.ranges_changed.connect(
+            lambda _ranges: self._sync_length_from_selection()
+        )
+        self.timeline.selection_changed.connect(
+            lambda _index: self._sync_length_from_selection()
+        )
         center.addWidget(self.timeline, 0)
         root.addLayout(center, 1)
 
@@ -126,6 +139,8 @@ class ViralClipsPage(QWidget):
         self._clip_length.setRange(5, 180)
         self._clip_length.setValue(30)
         self._clip_length.setSuffix(" sec")
+        self._clip_length.setMinimumHeight(32)
+        self._clip_length.valueChanged.connect(self._on_clip_length_changed)
         layout.addLayout(self._row(t("viral.clip_length"), self._clip_length))
 
         self._clips = QComboBox(self)
@@ -164,7 +179,7 @@ class ViralClipsPage(QWidget):
         # Real player (QMediaPlayer): the source video actually plays
         # here, with working play/pause + seek. The previous panel was a
         # static pixmap whose transport buttons were never connected.
-        self._player_widget = VideoPlayerWidget(self)
+        self._player_widget = VideoPlayerWidget(self, shrinkable=True)
         layout.addWidget(self._player_widget, 1)
         return panel
 
@@ -197,14 +212,24 @@ class ViralClipsPage(QWidget):
 
     # -- state -----------------------------------------------------------
     def _on_language_changed(self, index: int) -> None:
-        ready = index >= 0
+        self._refresh_readiness()
+
+    def _refresh_readiness(self) -> None:
+        """Ready = a language is chosen OR a manual range exists.
+
+        Manual ranges cut exactly the selected timeline section and skip
+        AI discovery, so they must be startable with no language picked;
+        the pipeline then uses auto-detect for the (optional) caption
+        transcription instead of blocking.
+        """
+        ready = self._language.currentIndex() >= 0 or self.timeline.has_manual_ranges()
         if ready != self._ready:
             self._ready = ready
             self.readiness_changed.emit(ready)
 
     @property
     def is_ready(self) -> bool:
-        """True once a language has been chosen."""
+        """True once a language is chosen or a manual range exists."""
         return self._ready
 
     @property
@@ -264,9 +289,10 @@ class ViralClipsPage(QWidget):
         return self.timeline.has_manual_ranges()
 
     def _on_manual_mode_changed(self, manual: bool) -> None:
-        """Manual ranges take over: Clip length / Clips are disabled and
-        Start clipping uses exactly those ranges (AI discovery skipped)."""
-        self._clip_length.setEnabled(not manual)
+        """Manual ranges take over: the Clips count is disabled and Start
+        clipping uses exactly those ranges (AI discovery skipped). Clip
+        length stays live in manual mode — it mirrors the selected
+        range's duration and resizes it when edited (v0.2.1 G)."""
         self._clips.setEnabled(not manual)
         if manual:
             count = len(self.timeline.manual_ranges())
@@ -274,8 +300,53 @@ class ViralClipsPage(QWidget):
                 f"Manual ranges: {count} — AI discovery skipped, "
                 "Start clipping uses exactly these ranges."
             )
+            self._sync_length_from_selection()
         else:
+            self._clip_length.setEnabled(True)
             self.set_status("")
+        self._refresh_readiness()
+
+    # -- Clip length <-> range sync (v0.2.1 G) ----------------------------
+
+    def _sync_length_from_selection(self) -> None:
+        """Range -> Clip length: show the selected range's duration.
+
+        In auto mode (no manual ranges) Clip length keeps its own
+        meaning (the discovery target) and is left alone.
+        """
+        if not self.timeline.has_manual_ranges():
+            return
+        index = self.timeline.selected_index
+        ranges = self.timeline.manual_ranges()
+        if index is None or not (0 <= index < len(ranges)):
+            self._clip_length.setEnabled(False)
+            return
+        self._clip_length.setEnabled(True)
+        duration = int(round(ranges[index].duration))
+        if duration > self._clip_length.maximum():
+            self._clip_length.setMaximum(duration)
+        self._syncing_length = True
+        try:
+            self._clip_length.setValue(max(self._clip_length.minimum(), duration))
+        finally:
+            self._syncing_length = False
+
+    def _on_clip_length_changed(self, value: int) -> None:
+        """Clip length -> range: resize the selected range's end.
+
+        No-ops while syncing from a range, in auto mode, or when no
+        range is selected.
+        """
+        if self._syncing_length:
+            return
+        if not self.timeline.has_manual_ranges():
+            return
+        index = self.timeline.selected_index
+        ranges = self.timeline.manual_ranges()
+        if index is None or not (0 <= index < len(ranges)):
+            return
+        rng = ranges[index]
+        self.timeline.set_range_bounds(index, rng.start, rng.start + float(value))
 
     def set_video(self, duration: float, time_label: str) -> None:
         """Attach a loaded video (duration in seconds)."""

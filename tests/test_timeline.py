@@ -9,6 +9,7 @@ from clipforge.core.render import ClipResult, RenderJob, RenderSettings
 from clipforge.ui.edit import EditPage
 from clipforge.ui.render import RenderPage
 from clipforge.ui.timeline import TimelineWidget
+from clipforge.ui.viral_clips import ViralClipsPage
 
 
 @pytest.fixture(scope="module")
@@ -110,7 +111,11 @@ def test_manual_mode_disables_clip_controls(window) -> None:
     assert viral._clip_length.isEnabled()
     assert viral._clips.isEnabled()
     viral.timeline.add_range()
-    assert not viral._clip_length.isEnabled()
+    # v0.2.1 G: the Clips count still disables in manual mode, but Clip
+    # length now stays ENABLED — it mirrors the selected range (the
+    # default range is 30 s) and resizes it when edited.
+    assert viral._clip_length.isEnabled()
+    assert viral._clip_length.value() == 30
     assert not viral._clips.isEnabled()
     assert viral.has_manual_ranges
     assert len(viral.manual_ranges) == 1
@@ -118,6 +123,59 @@ def test_manual_mode_disables_clip_controls(window) -> None:
     viral.timeline.clear_ranges()
     assert viral._clip_length.isEnabled()
     assert viral._clips.isEnabled()
+    window._show_home()
+
+
+# -- add-range discoverability ------------------------------------------
+def test_add_range_button_has_visible_text(timeline) -> None:
+    # Regression: the add control used to be a 26 px flat "+" glyph with
+    # only a tooltip — users could not find how to cut a manual range.
+    assert "Add clip range" in timeline._add_btn.text()
+    timeline._add_btn.click()
+    assert len(timeline.manual_ranges()) == 1
+
+
+def test_empty_state_hint_click_adds_range(timeline) -> None:
+    # The "+ Add a clip or start viral detection" empty state is a real
+    # button now: clicking it adds a range too.
+    timeline._empty.click()
+    assert len(timeline.manual_ranges()) == 1
+    assert timeline._empty.isHidden()
+
+
+# -- readiness: manual ranges need no language ---------------------------
+def test_manual_range_readiness_without_language(window) -> None:
+    page = ViralClipsPage(window)
+    assert page.language_code == ""
+    assert not page.is_ready
+    page.timeline.set_duration(300.0, fps=30.0)
+    assert page.timeline.add_range()
+    # A manual cutout needs no transcription: ready with no language.
+    assert page.is_ready
+    page.timeline.clear_ranges()
+    assert not page.is_ready
+    # A chosen language on its own still readies the page (AI path).
+    page._language.setCurrentIndex(1)
+    assert page.is_ready
+
+
+def test_start_button_enabled_by_manual_range_without_language(window) -> None:
+    if not window._store.projects:
+        from clipforge.core.projects import Project
+
+        window._store.add(Project(name="Timeline test", source_path="video.mp4"))
+    window._open_project(window._store.projects[0])
+    window._wizard.go_to_step(1)
+    viral = window._wizard._viral
+    viral.reset()
+    window._wizard._video_path = "video.mp4"
+    viral.timeline.set_duration(300.0, fps=30.0)
+    assert viral.language_code == ""
+    assert not window._wizard._start_btn.isEnabled()
+    viral.timeline.add_range()
+    assert window._wizard._start_btn.isEnabled()
+    viral.timeline.clear_ranges()
+    assert not window._wizard._start_btn.isEnabled()
     window._show_home()
 
 
@@ -171,3 +229,86 @@ def test_render_page_pending_clips_enable_button(window) -> None:
     ])
     assert page._render_btn.isEnabled()
     assert "1080 × 1920" in page._summary_rows["Resolution"].text()
+
+
+# -- v0.2.1 A: buttons must have real clickable size --------------------
+def test_timeline_buttons_have_real_clickable_size(window) -> None:
+    """No more 26 px flat glyphs that render as tiny dots (A).
+
+    Zoom -/+, the header Delete, the range-row delete and the player
+    play button all get a bordered, >=34 px-class hit area.
+    """
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    if not window._store.projects:
+        from clipforge.core.projects import Project
+
+        window._store.add(Project(name="Buttons test", source_path="video.mp4"))
+    window._open_project(window._store.projects[0])
+    window._wizard.go_to_step(1)
+    viral = window._wizard._viral
+    window.show()
+    QApplication.processEvents()
+    timeline = viral.timeline
+
+    assert timeline._add_btn.minimumHeight() >= 34
+    assert not timeline._add_btn.isFlat()
+    assert timeline._delete_btn.minimumHeight() >= 34
+    assert "Delete" in timeline._delete_btn.text()
+    assert not timeline._delete_btn.isFlat()
+
+    zoom = [b for b in timeline.findChildren(QPushButton) if b.text() in ("−", "+")]
+    assert len(zoom) == 2
+    for btn in zoom:
+        assert btn.width() >= 34 and btn.height() >= 34
+        assert not btn.isFlat()
+
+    timeline.set_duration(300.0, fps=30.0)
+    timeline.add_range(10.0, 40.0)
+    QApplication.processEvents()
+    row = timeline._rows[0]
+    row_delete = [
+        b for b in row.findChildren(QPushButton)
+        if b.toolTip() == "Delete this range"
+    ][0]
+    assert row_delete.width() >= 34 and row_delete.height() >= 30
+    assert not row_delete.isFlat()
+
+    play_btn = viral._player_widget._play_btn
+    assert play_btn.minimumWidth() >= 40 and play_btn.minimumHeight() >= 34
+    assert not play_btn.isFlat()
+    window._show_home()
+
+
+# -- v0.2.1 G: Clip length <-> selected range sync -----------------------
+def test_clip_length_syncs_with_selected_range(window) -> None:
+    if not window._store.projects:
+        from clipforge.core.projects import Project
+
+        window._store.add(Project(name="Sync test", source_path="video.mp4"))
+    window._open_project(window._store.projects[0])
+    window._wizard.go_to_step(1)
+    viral = window._wizard._viral
+    viral.timeline.set_duration(300.0, fps=30.0)
+
+    # Create a 65s -> 125s range: Clip length must show its duration.
+    viral.timeline.add_range(65.0, 125.0)
+    assert viral._clip_length.value() == 60
+    assert viral._clip_length.isEnabled()
+
+    # Editing the range end moves Clip length with it.
+    viral.timeline.set_range_bounds(0, 65.0, 140.0)
+    assert viral._clip_length.value() == 75
+
+    # Setting Clip length to 45 moves the range end to start + 45.
+    viral._clip_length.setValue(45)
+    rng = viral.timeline.manual_ranges()[0]
+    assert rng.start == pytest.approx(65.0)
+    assert rng.end == pytest.approx(110.0)
+
+    # Auto mode: Clip length is free again (no range to drive it).
+    viral.timeline.clear_ranges()
+    viral._clip_length.setValue(41)
+    assert viral._clip_length.value() == 41
+    assert not viral.timeline.has_manual_ranges()
+    window._show_home()

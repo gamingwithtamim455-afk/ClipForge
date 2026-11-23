@@ -24,6 +24,7 @@ record of the old demo data.)
 from __future__ import annotations
 
 import json
+import shutil
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -106,6 +107,47 @@ def migrate_store_data(data: dict) -> dict:
             migrate_project_dict(p, version) for p in data.get("projects", [])
         ],
     }
+
+
+def delete_project_files(project: Project) -> list[Path]:
+    """Delete a project's OWN generated files; returns what was removed.
+
+    Removes the stored thumbnail and the project's rendered-clips folder
+    (``project.export_dir`` — the per-project output directory the
+    pipeline wrote). The user's ORIGINAL source video is never touched:
+    the output folder is skipped entirely when the source file lives
+    inside it, and the thumbnail is skipped if it somehow IS the source.
+    """
+    removed: list[Path] = []
+    source = Path(project.source_path) if project.source_path else None
+
+    if project.thumbnail:
+        thumb = Path(project.thumbnail)
+        try:
+            if thumb.is_file() and (
+                source is None or thumb.resolve() != source.resolve()
+            ):
+                thumb.unlink()
+                removed.append(thumb)
+        except OSError:
+            pass
+
+    if project.export_dir:
+        out_dir = Path(project.export_dir)
+        try:
+            if out_dir.is_dir():
+                contains_source = False
+                if source is not None and source.exists():
+                    contains_source = source.resolve().is_relative_to(
+                        out_dir.resolve()
+                    )
+                if not contains_source:
+                    shutil.rmtree(out_dir, ignore_errors=True)
+                    if not out_dir.exists():
+                        removed.append(out_dir)
+        except OSError:
+            pass
+    return removed
 
 
 class ProjectStore:

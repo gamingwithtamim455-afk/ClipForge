@@ -124,7 +124,8 @@ class WizardPage(QWidget):
         header = QHBoxLayout()
         header.setContentsMargins(8, 8, 12, 8)
         back = QPushButton(f"‹ {t('wizard.back')}", self)
-        back.setFlat(True)
+        back.setMinimumHeight(30)
+        back.setMinimumWidth(84)
         back.clicked.connect(self._on_back)
         header.addWidget(back)
         header.addStretch(1)
@@ -148,7 +149,8 @@ class WizardPage(QWidget):
         self._project_label.setStyleSheet("font-weight: 600;")
         header.addWidget(self._project_label)
         change = QPushButton(t("wizard.change"), self)
-        change.setFlat(True)
+        change.setMinimumHeight(30)
+        change.setMinimumWidth(84)
         change.clicked.connect(self._on_change_video)
         header.addWidget(change)
         return header
@@ -164,14 +166,21 @@ class WizardPage(QWidget):
         footer.addWidget(self._status)
         buttons = QHBoxLayout()
         back = QPushButton(f"‹ {t('wizard.back')}", self)
+        back.setMinimumHeight(34)
+        back.setMinimumWidth(84)
         back.clicked.connect(self._on_back)
         buttons.addWidget(back)
         self._start_btn = QPushButton(t("wizard.start_clipping"), self)
         self._start_btn.setProperty("primary", True)
+        self._start_btn.setMinimumHeight(36)
+        self._start_btn.setMinimumWidth(150)
+        self._start_btn.setStyleSheet("font-weight: 600;")
         self._start_btn.setEnabled(False)
         self._start_btn.clicked.connect(self._on_start_clipping)
         buttons.addWidget(self._start_btn)
         self._cancel_btn = QPushButton("Cancel", self)
+        self._cancel_btn.setMinimumHeight(34)
+        self._cancel_btn.setMinimumWidth(90)
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.clicked.connect(self.cancel_requested.emit)
         buttons.addWidget(self._cancel_btn)
@@ -321,7 +330,8 @@ class WizardPage(QWidget):
         return self._viral.manual_ranges
 
     def _update_start_button(self, _ready: bool | None = None) -> None:
-        """Enabled only with a video selected and a language chosen."""
+        """Enabled with a video selected and the Viral page ready
+        (a language chosen, or a manual timeline range present)."""
         ready = bool(self._video_path) and self._viral.is_ready
         self._start_btn.setEnabled(ready and not self._running)
         if not self._video_path:

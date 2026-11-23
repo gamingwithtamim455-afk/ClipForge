@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -40,6 +41,7 @@ class SegmentedControl(QWidget):
             btn = QPushButton(option, self)
             btn.setCheckable(True)
             btn.setFlat(True)
+            btn.setMinimumHeight(30)
             btn.clicked.connect(lambda _checked, o=option: self.set_value(o))
             layout.addWidget(btn)
             self._buttons[option] = btn
@@ -123,14 +125,33 @@ def _format_ms(ms: int) -> str:
     return f"{total // 60}:{total % 60:02d}"
 
 
+class _ClippingVideoContainer(QWidget):
+    """Clips the video surface to its own bounds and re-lays it out.
+
+    The video widget is deliberately made LARGER than this container in
+    crop-preview mode (scaled so the crop window fills the container,
+    offset so the crop window is what shows); Qt clips children to the
+    parent rect, so only the crop region is visible.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.on_resize = None  # callable[[], None] | None
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        if self.on_resize is not None:
+            self.on_resize()
+
+
 class VideoPlayerWidget(QWidget):
     """A real video player: QMediaPlayer + QVideoWidget + transport row.
 
     This replaces the original static-pixmap "player" mock, whose play
     button and seek slider were never connected to anything (the root
     cause of "video won't play / buttons don't work"). The video area is
-    a fixed-size 9:16-style frame; a poster pixmap (video thumbnail) is
-    shown until a source is loaded.
+    a 9:16-style frame (fixed-size, or shrinkable in the main window);
+    a poster pixmap (video thumbnail) is shown until a source is loaded.
 
     ``set_play_range(start, end)`` optionally confines playback to a
     window (used by the Edit step to preview one clip inside the source).
@@ -142,6 +163,7 @@ class VideoPlayerWidget(QWidget):
         *,
         video_width: int = 270,
         video_height: int = 480,
+        shrinkable: bool = False,
     ) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
@@ -150,22 +172,46 @@ class VideoPlayerWidget(QWidget):
 
         # Video area: poster (placeholder art / thumbnail) under the
         # real video surface; the surface takes over once a source loads.
+        # Fixed-size by default (preview dialogs). ``shrinkable`` players
+        # (main-window pages) may instead contract to 2/3 of the given
+        # size so the window fits smaller / scaled screens — a fixed
+        # 480 px video area was what pushed the main window's minimum
+        # height past a 720 px-tall logical screen.
         self._stack = QStackedLayout()
         self._poster = QLabel(self)
         self._poster.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._poster.setFixedSize(video_width, video_height)
-        self._poster.setPixmap(thumbnail_pixmap("player", video_width, video_height))
-        self._stack.addWidget(self._poster)
-        self._video_widget = QVideoWidget(self)
-        self._video_widget.setFixedSize(video_width, video_height)
+        # The video surface lives inside a clipping container so the
+        # Edit step can preview the reframed 9:16 crop (see
+        # set_crop_preview) instead of the raw letterboxed source.
+        self._video_container = _ClippingVideoContainer(self)
+        self._video_container.on_resize = self._layout_video
+        self._video_widget = QVideoWidget(self._video_container)
         self._video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
-        self._stack.addWidget(self._video_widget)
+        self._crop_preview: tuple[float, float, float, float] | None = None
+        if shrinkable:
+            min_w, min_h = video_width * 2 // 3, video_height * 2 // 3
+            for area in (self._poster, self._video_container):
+                area.setMinimumSize(min_w, min_h)
+                area.setSizePolicy(
+                    QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+                )
+            self._poster.setPixmap(thumbnail_pixmap("player", min_w, min_h))
+            self.setSizePolicy(
+                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+            )
+        else:
+            self._poster.setFixedSize(video_width, video_height)
+            self._poster.setPixmap(thumbnail_pixmap("player", video_width, video_height))
+            self._video_container.setFixedSize(video_width, video_height)
+        self._video_widget.setGeometry(0, 0, video_width, video_height)
+        self._stack.addWidget(self._poster)
+        self._stack.addWidget(self._video_container)
         self._stack.setCurrentWidget(self._poster)
         video_row = QHBoxLayout()
         video_row.addStretch(1)
         video_row.addLayout(self._stack)
         video_row.addStretch(1)
-        layout.addLayout(video_row)
+        layout.addLayout(video_row, 1 if shrinkable else 0)
 
         self._player = QMediaPlayer(self)
         self._audio = QAudioOutput(self)
@@ -174,7 +220,11 @@ class VideoPlayerWidget(QWidget):
 
         transport = QHBoxLayout()
         self._play_btn = QPushButton("▶", self)
-        self._play_btn.setFlat(True)
+        # Bordered with a real hit area — the old flat glyph button
+        # rendered as a tiny dot on high-DPI Windows displays.
+        self._play_btn.setMinimumSize(46, 36)
+        self._play_btn.setStyleSheet("font-size: 15px; font-weight: 600;")
+        self._play_btn.setToolTip("Play / pause")
         self._play_btn.setEnabled(False)
         self._play_btn.clicked.connect(self.toggle)
         transport.addWidget(self._play_btn)
@@ -200,10 +250,53 @@ class VideoPlayerWidget(QWidget):
     def set_source(self, path: str) -> None:
         """Load a video file and show the real video surface."""
         self._range = None
+        self.set_crop_preview(None)
         self._player.setSource(QUrl.fromLocalFile(path))
-        self._stack.setCurrentWidget(self._video_widget)
+        self._stack.setCurrentWidget(self._video_container)
         self._play_btn.setEnabled(True)
         self._seek.setEnabled(True)
+
+    # -- crop preview ------------------------------------------------------
+    def set_crop_preview(
+        self, rect: tuple[float, float, float, float] | None
+    ) -> None:
+        """Preview a normalised crop window ``(x, y, w, h)`` of the frame.
+
+        The video surface is scaled so the crop window fills the whole
+        video area — the Edit step uses this to show the reframed 9:16
+        result of face tracking instead of the raw 16:9 source with
+        empty bars (v0.2.1 B). ``None`` restores the full frame.
+        """
+        self._crop_preview = rect
+        self._video_widget.setAspectRatioMode(
+            Qt.AspectRatioMode.IgnoreAspectRatio
+            if rect is not None
+            else Qt.AspectRatioMode.KeepAspectRatio
+        )
+        self._layout_video()
+
+    def _layout_video(self) -> None:
+        """Position the video surface inside its clipping container."""
+        container = getattr(self, "_video_container", None)
+        if container is None:
+            return
+        width, height = container.width(), container.height()
+        if width <= 0 or height <= 0:
+            return
+        crop = getattr(self, "_crop_preview", None)
+        if crop is None:
+            self._video_widget.setGeometry(0, 0, width, height)
+            return
+        fx, fy, fw, fh = crop
+        if fw <= 0 or fh <= 0:
+            self._video_widget.setGeometry(0, 0, width, height)
+            return
+        disp_w = width / fw
+        disp_h = height / fh
+        self._video_widget.setGeometry(
+            int(round(-fx * disp_w)), int(round(-fy * disp_h)),
+            int(round(disp_w)), int(round(disp_h)),
+        )
 
     def set_poster(self, path: str) -> None:
         """Show a still frame as the poster (before/without playback)."""
@@ -222,6 +315,7 @@ class VideoPlayerWidget(QWidget):
         self._player.stop()
         self._player.setSource(QUrl())
         self._range = None
+        self.set_crop_preview(None)
         self._stack.setCurrentWidget(self._poster)
         self._play_btn.setEnabled(False)
         self._seek.setEnabled(False)
@@ -316,11 +410,14 @@ class ProjectCard(QFrame):
     """
 
     clicked = Signal(str)  # project id
+    delete_requested = Signal(str)  # project id
 
     def __init__(self, project, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.project = project
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
@@ -366,6 +463,26 @@ class ProjectCard(QFrame):
         name.setToolTip(project.name)
         layout.addWidget(name)
 
+        # Visible Delete (v0.2.1 F: there was no way to remove a project).
+        # The Home page confirms before anything is deleted.
+        delete_row = QHBoxLayout()
+        delete_row.addStretch(1)
+        self._delete_btn = QPushButton("🗑 Delete", self)
+        self._delete_btn.setMinimumHeight(30)
+        self._delete_btn.setToolTip("Delete this project")
+        self._delete_btn.clicked.connect(
+            lambda _checked=False: self.delete_requested.emit(self.project.id)
+        )
+        delete_row.addWidget(self._delete_btn)
+        delete_row.addStretch(1)
+        layout.addLayout(delete_row)
+
+    def _on_context_menu(self, pos) -> None:  # noqa: ANN001 - Qt point type
+        menu = QMenu(self)
+        action = menu.addAction("Delete project…")
+        if menu.exec(self.mapToGlobal(pos)) == action:
+            self.delete_requested.emit(self.project.id)
+
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().resizeEvent(event)
         # Keep the duration badge pinned to the thumbnail's bottom-right.
@@ -377,5 +494,8 @@ class ProjectCard(QFrame):
             )
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt override
-        self.clicked.emit(self.project.id)
+        # Left button only: a right-click opens the context menu instead
+        # of also opening the project.
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.project.id)
         super().mousePressEvent(event)

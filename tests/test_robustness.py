@@ -142,11 +142,11 @@ def test_render_pipeline_jobs_cancel_between_clips(tmp_path) -> None:
                   output_path=str(tmp_path / "02_clip.mp4"),
                   settings=_fast_settings()),
     ]
-    calls = {"n": 0}
-
     def _cancel():
-        calls["n"] += 1
-        return calls["n"] > 1  # cancel after the first clip's check
+        # Cancel once the first clip is fully rendered. (Before v0.2.1
+        # this was a call counter; cancel is now also polled DURING an
+        # encode, so the flag must flip on state, not on call count.)
+        return (tmp_path / "01_clip.mp4").exists()
 
     results = render_pipeline_jobs(jobs, cancel=_cancel)
     assert len(results) == 1
@@ -267,3 +267,106 @@ def test_missing_fonts_dir_still_renders(tmp_path, monkeypatch) -> None:
         language="en", output_path=out,
     )
     assert Path(result.video_path).exists()
+
+
+# ---------------------------------------------------------------------------
+# v0.2.1 D: cancel must complete within seconds, mid-stage
+# ---------------------------------------------------------------------------
+
+def test_run_ffmpeg_cancel_terminates_promptly(tmp_path) -> None:
+    """A running encode is terminated, not waited out (D)."""
+    import time
+
+    from clipforge.core.ffmpeg import run_ffmpeg
+
+    out = str(tmp_path / "long.mp4")
+    started = time.monotonic()
+    with pytest.raises(FFmpegError, match="cancelled"):
+        run_ffmpeg(
+            [
+                "-f", "lavfi", "-i",
+                "testsrc2=size=1920x1080:rate=30:duration=120",
+                "-c:v", "libx264", "-preset", "slow", "-pix_fmt", "yuv420p",
+                out,
+            ],
+            timeout=600.0,
+            cancel=lambda: time.monotonic() - started > 0.6,
+        )
+    assert time.monotonic() - started < 15.0
+
+
+def test_render_clip_cancel_leaves_no_output(tmp_path) -> None:
+    """Cancelling mid-encode: prompt stop, no partial clip left (D)."""
+    import time
+
+    from clipforge.core.face_tracking import CropPath, FaceBox
+
+    video = _make_video(tmp_path, duration=30.0)
+    out = str(tmp_path / "cancelled_clip.mp4")
+    # A ready-made centred crop path skips face tracking so the test
+    # reaches the encode immediately (640x360 source, 9:16 crop 202x360).
+    path = CropPath(
+        times=[0.0, 30.0],
+        boxes=[FaceBox(219, 0, 202, 360), FaceBox(219, 0, 202, 360)],
+        faces=[None, None], mode="track",
+    )
+    started = time.monotonic()
+    with pytest.raises(RenderError, match="cancelled"):
+        render_clip(
+            video, start=0.0, end=30.0,
+            settings=RenderSettings(preset="slow", crf=15),
+            index=1, crop_path=path, words=[], language="en",
+            output_path=out,
+            cancel=lambda: time.monotonic() - started > 0.8,
+        )
+    assert time.monotonic() - started < 20.0
+    assert not Path(out).exists()
+    assert not list(tmp_path.glob("*.part.mp4"))
+
+
+def test_pipeline_tracking_cancel_is_not_swallowed(tmp_path) -> None:
+    """A cancel raised inside face tracking aborts the pipeline (D).
+
+    The tracking stage's fallback (one bad range -> centred crop) must
+    not swallow a cancellation and carry on.
+    """
+    video = _make_video(tmp_path, duration=10.0)
+    state = {"cancel": False}
+
+    class _FakeDeepgram:
+        def transcribe_chunk(self, audio_bytes: bytes, language: str = "auto") -> dict:
+            return {
+                "results": {
+                    "channels": [{
+                        "detected_language": "en",
+                        "alternatives": [{"words": [
+                            {"word": "hello", "start": 0.5, "end": 0.9,
+                             "confidence": 0.99},
+                        ]}],
+                    }],
+                    "utterances": [],
+                }
+            }
+
+    def _cancelled_tracker(video_path, **kwargs):
+        # The user pressed Cancel mid-scan; the tracker aborts and the
+        # cancel flag is set by the time the pipeline catches it.
+        state["cancel"] = True
+        raise RuntimeError("face tracking cancelled")
+
+    config = PipelineConfig(
+        video_path=video,
+        language="en",
+        engine="deepgram",
+        manual_ranges=[ClipRange(1.0, 4.0)],
+        render_settings=RenderSettings(
+            width=270, height=480, preset="ultrafast", crf=28,
+        ),
+    )
+    with pytest.raises(PipelineError, match="Cancelled"):
+        run_pipeline(
+            config,
+            cancel=lambda: state["cancel"],
+            deepgram_client=_FakeDeepgram(),
+            track_faces_fn=_cancelled_tracker,
+        )

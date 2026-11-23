@@ -377,49 +377,67 @@ def run_pipeline(
             )
             for i, r in enumerate(config.manual_ranges)
         ]
-    # No Deepgram key is not a blocker: the transcription layer falls back
-    # to local Whisper (with a status note) when no key is stored, so the
-    # app fully works with zero API keys. Only a *wrong* key (401) errors.
-    try:
-        if manual_validated is not None:
-            total_audio = sum(r.end - r.start for r in manual_validated)
-            _report(
-                5,
-                f"Transcribing your {len(manual_validated)} range(s) "
-                f"({_format_audio_seconds(total_audio)} of audio)…",
-            )
-            transcript = transcribe_ranges(
-                config.video_path,
-                [(r.start, r.end) for r in manual_validated],
-                duration=info.duration,
-                language=config.language,
-                engine=config.engine,
-                deepgram_key=deepgram_key() or "",
-                deepgram_model=config.deepgram_model,
-                whisper_model=config.whisper_model,
-                whisper_device=config.whisper_device,
-                deepgram_client=deepgram_client,
-                progress=lambda p, m: _report(5 + int(p * 0.35), m),
-                cancel=cancel,
-            )
-        else:
-            _report(5, "Transcribing…")
-            transcript = transcribe_video(
-                config.video_path,
-                language=config.language,
-                engine=config.engine,
-                deepgram_key=deepgram_key() or "",
-                deepgram_model=config.deepgram_model,
-                whisper_model=config.whisper_model,
-                whisper_device=config.whisper_device,
-                deepgram_client=deepgram_client,
-                progress=lambda p, m: _report(5 + int(p * 0.35), m),
-                cancel=cancel,
-            )
-    except ProviderError as exc:
-        raise PipelineError(friendly_error(exc)) from exc
-    except Exception as exc:
-        raise PipelineError(friendly_error(exc)) from exc
+    # H (v0.2.1): face tracking and cutting are fully local and need NO
+    # transcript. With manual ranges + Cutout Only (captions off),
+    # transcription is pure waste — on a CPU-only PC the local Whisper
+    # pass was the multi-minute stall at 5% that made users give up and
+    # cancel. Skip it entirely in that case; downstream steps that
+    # optionally use the transcript (labels, caption editing) degrade
+    # gracefully on an empty one.
+    skip_transcription = (
+        manual_validated is not None and config.captions == "none"
+    )
+    if skip_transcription:
+        _report(
+            5,
+            "Cutout Only: no captions needed — skipping transcription.",
+        )
+        transcript = Transcript(language=config.language)
+    else:
+        # No Deepgram key is not a blocker: the transcription layer falls
+        # back to local Whisper (with a status note) when no key is
+        # stored, so the app fully works with zero API keys. Only a
+        # *wrong* key (401) errors.
+        try:
+            if manual_validated is not None:
+                total_audio = sum(r.end - r.start for r in manual_validated)
+                _report(
+                    5,
+                    f"Transcribing your {len(manual_validated)} range(s) "
+                    f"({_format_audio_seconds(total_audio)} of audio)…",
+                )
+                transcript = transcribe_ranges(
+                    config.video_path,
+                    [(r.start, r.end) for r in manual_validated],
+                    duration=info.duration,
+                    language=config.language,
+                    engine=config.engine,
+                    deepgram_key=deepgram_key() or "",
+                    deepgram_model=config.deepgram_model,
+                    whisper_model=config.whisper_model,
+                    whisper_device=config.whisper_device,
+                    deepgram_client=deepgram_client,
+                    progress=lambda p, m: _report(5 + int(p * 0.35), m),
+                    cancel=cancel,
+                )
+            else:
+                _report(5, "Transcribing…")
+                transcript = transcribe_video(
+                    config.video_path,
+                    language=config.language,
+                    engine=config.engine,
+                    deepgram_key=deepgram_key() or "",
+                    deepgram_model=config.deepgram_model,
+                    whisper_model=config.whisper_model,
+                    whisper_device=config.whisper_device,
+                    deepgram_client=deepgram_client,
+                    progress=lambda p, m: _report(5 + int(p * 0.35), m),
+                    cancel=cancel,
+                )
+        except ProviderError as exc:
+            raise PipelineError(friendly_error(exc)) from exc
+        except Exception as exc:
+            raise PipelineError(friendly_error(exc)) from exc
     _check_cancel(cancel)
     if transcript.note:
         _report(40, transcript.note)
@@ -482,12 +500,23 @@ def run_pipeline(
             55 + int(20 * index / max(len(ranges), 1)),
             f"Tracking faces in clip {index + 1} of {len(ranges)}…",
         )
+        def _track_progress(frac: float, _index=index) -> None:
+            _report(
+                55 + int(20 * (_index + frac) / max(len(ranges), 1)),
+                f"Tracking faces in clip {_index + 1} of {len(ranges)}…",
+            )
+
         try:
             path = tracker(
                 config.video_path, start=rng.start, end=rng.end,
                 aspect=config.aspect, split_screen=config.split_screen,
+                progress=_track_progress, cancel=cancel,
             )
         except Exception:
+            # A cancel is not a tracking failure — honour it at once
+            # instead of falling back and carrying on with the next clip.
+            if cancel is not None and cancel():
+                raise PipelineError("Cancelled.")
             # One bad range must not kill the run: render it with a plain
             # centered crop and flag it for review in the Edit step.
             path = None
@@ -558,13 +587,21 @@ def render_pipeline_jobs(
             if progress is not None:
                 progress(_base + int(percent / total), f"Clip {job.index}: {message}")
 
-        result = render_clip(
-            job.video_path, start=job.start, end=job.end,
-            settings=job.settings, index=job.index,
-            crop_path=job.crop_path, words=job.words,
-            language=job.language, output_path=job.output_path,
-            label=job.label, overlays=job.overlays, on_progress=_job_progress,
-        )
+        try:
+            result = render_clip(
+                job.video_path, start=job.start, end=job.end,
+                settings=job.settings, index=job.index,
+                crop_path=job.crop_path, words=job.words,
+                language=job.language, output_path=job.output_path,
+                label=job.label, overlays=job.overlays,
+                on_progress=_job_progress, cancel=cancel,
+            )
+        except Exception as exc:
+            # An in-encode cancel surfaces as RenderError("cancelled");
+            # present it as a clean cancellation, not an encode failure.
+            if "cancelled" in str(exc):
+                raise PipelineError("Cancelled.") from exc
+            raise
         results.append(result)
         if result.label_written or label_client is None:
             continue

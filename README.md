@@ -7,7 +7,7 @@ transcribe, find the best moments, track the speaker's face, and render
 Free and open source. Python 3.12, PySide6 (Qt6). **Windows 11 is the
 first target**; the same code runs on Linux for testing.
 
-> **Status: working end-to-end (v0.2.0).** Home, wizard (Select Video →
+> **Status: working end-to-end (v0.2.1).** Home, wizard (Select Video →
 > Viral Clips → Edit → Render), Settings with 7 tabs, transcription
 > (Deepgram / local Whisper), AI clip discovery (DeepSeek), face
 > tracking, single-pass rendering with burned captions, TikTok captions +

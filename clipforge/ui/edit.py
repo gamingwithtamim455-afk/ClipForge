@@ -80,6 +80,7 @@ class EditPage(QWidget):
         super().__init__(parent)
         self._video_source: str = ""
         self._clips: list[EditableClip] = []
+        self._crop_previews: dict[int, tuple[float, float, float, float] | None] = {}
         self._video_duration: float = 0.0
         self._selected: int | None = None
         self._syncing_timeline = False
@@ -116,7 +117,7 @@ class EditPage(QWidget):
         preview_title = QLabel(t("player.title"), self)
         preview_title.setProperty("title", True)
         center_layout.addWidget(preview_title)
-        self._player_widget = VideoPlayerWidget(self)
+        self._player_widget = VideoPlayerWidget(self, shrinkable=True)
         center_layout.addWidget(self._player_widget, 1)
         body.addWidget(center, 1)
 
@@ -303,6 +304,7 @@ class EditPage(QWidget):
         again in the timeline below.
         """
         flags = qa_flags or {}
+        self._crop_previews = {}
         self._video_duration = video_duration
         if video_duration > 0:
             # The timeline validates ranges against the video length — without
@@ -474,7 +476,8 @@ class EditPage(QWidget):
         layout.addWidget(edit, 1)
         delete = QPushButton("×", widget)
         delete.setToolTip("Delete this line")
-        delete.setFixedWidth(24)
+        delete.setFixedSize(34, 30)
+        delete.setStyleSheet("font-size: 13px; font-weight: 600;")
         delete.clicked.connect(
             lambda _checked=False, r=row: self._on_delete_line_row(r)
         )
@@ -584,12 +587,67 @@ class EditPage(QWidget):
         else:
             self._player_widget.clear()
 
+    def set_crop_paths(
+        self,
+        crop_paths: dict,
+        source_w: int,
+        source_h: int,
+        *,
+        aspect: tuple[int, int] = (9, 16),
+    ) -> None:
+        """Give the preview each clip's reframed crop window.
+
+        ``crop_paths`` maps clip index -> CropPath (or None). For a
+        tracked path the MEDIAN crop box (normalised to 0..1) becomes
+        the preview window, so the Edit player shows the reframed 9:16
+        result instead of the raw letterboxed source (v0.2.1 B). Split
+        paths keep the full frame (two panes); a missing path previews
+        the centred fill crop the renderer will use.
+        """
+        self._crop_previews = {}
+        if source_w <= 0 or source_h <= 0:
+            return
+        aw, ah = aspect
+        # Centred fill-crop rect (normalised) for clips without a path.
+        crop_w = min(float(source_w), source_h * aw / ah)
+        crop_h = crop_w * ah / aw
+        if crop_h > source_h:
+            crop_h = float(source_h)
+            crop_w = crop_h * aw / ah
+        centred = (
+            (source_w - crop_w) / 2 / source_w,
+            (source_h - crop_h) / 2 / source_h,
+            crop_w / source_w,
+            crop_h / source_h,
+        )
+        for index in range(len(self._clips)):
+            path = crop_paths.get(index) if crop_paths else None
+            if path is None:
+                self._crop_previews[index] = centred
+            elif getattr(path, "mode", "") == "split" or not path.boxes:
+                self._crop_previews[index] = None
+            else:
+                box = path.boxes[len(path.boxes) // 2]
+                self._crop_previews[index] = (
+                    box.x / source_w, box.y / source_h,
+                    box.width / source_w, box.height / source_h,
+                )
+        if self._selected is not None:
+            self._player_widget.set_crop_preview(
+                self._crop_previews.get(self._selected)
+            )
+
     def _on_clip_selected(self, row: int) -> None:
         if 0 <= row < len(self._clips):
             self._selected = row
             self._show_error("")
             self._refresh_editor()
             clip = self._clips[row]
+            # Reframe the preview to this clip's crop window (applies
+            # whether or not a source is loaded yet).
+            self._player_widget.set_crop_preview(
+                self._crop_previews.get(row)
+            )
             if getattr(self, "_video_source", ""):
                 # Preview exactly this clip's range of the source.
                 self._player_widget.set_play_range(clip.start, clip.end)

@@ -4,8 +4,9 @@ Matches the recording: "Timeline" header with zoom slider and + / delete
 buttons, a time ruler, and the empty state "+ Add a clip or start viral
 detection". Clip ranges are drawn as blocks on the track.
 
-Manual ranges (build spec §1): the "+" button adds a clip range as an
-inline row with Start / End fields (``core.timeparse`` accepts ``90``,
+Manual ranges (build spec §1): the labelled "＋ Add clip range" button
+in the header (or a click on the empty-state hint) adds a clip range as
+an inline row with Start / End fields (``core.timeparse`` accepts ``90``,
 ``1:30``, ``01:30``, ``1:02:03`` and decimals) plus draggable handles on
 the timeline bar. Validation: end > start, inside the video length, no
 overlaps, warn above 60 s, up to 20 ranges. When at least one manual
@@ -55,7 +56,7 @@ class _Ruler(QWidget):
         self._timeline = timeline
         self.duration = 0.0
         self.pixels_per_second = 1.0
-        self.setMinimumHeight(96)
+        self.setMinimumHeight(60)  # ticks (20 px) + range blocks (28..60)
         self._drag: tuple[int, str] | None = None  # (range index, "start"|"end")
 
     # -- geometry ------------------------------------------------------
@@ -190,8 +191,10 @@ class _RangeRow(QWidget):
 
         layout.addStretch(1)
         delete_btn = QPushButton("✕", self)
-        delete_btn.setFlat(True)
-        delete_btn.setFixedWidth(26)
+        # Real clickable size with a visible border — the old 26 px flat
+        # glyph rendered as a tiny dot on high-DPI Windows displays.
+        delete_btn.setFixedSize(34, 32)
+        delete_btn.setStyleSheet("font-size: 13px; font-weight: 600;")
         delete_btn.setToolTip("Delete this range")
         delete_btn.clicked.connect(lambda: timeline.delete_range(index))
         layout.addWidget(delete_btn)
@@ -238,6 +241,7 @@ class TimelineWidget(QFrame):
     delete_clip_requested = Signal()
     ranges_changed = Signal(list)  # current manual ranges
     manual_mode_changed = Signal(bool)  # True when >= 1 manual range exists
+    selection_changed = Signal(int)  # selected range index (-1 = none)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -251,8 +255,8 @@ class TimelineWidget(QFrame):
         self._validation = RangeValidation()
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(10, 4, 10, 4)
+        layout.setSpacing(5)
 
         header = QHBoxLayout()
         title = QLabel(t("timeline.title"), self)
@@ -260,9 +264,9 @@ class TimelineWidget(QFrame):
         header.addWidget(title)
         header.addStretch(1)
         zoom_out = QPushButton("−", self)
-        zoom_out.setFlat(True)
-        zoom_out.setFixedWidth(26)
-        zoom_out.setStyleSheet("font-size: 14px; font-weight: 600;")
+        zoom_out.setFixedSize(34, 34)
+        zoom_out.setStyleSheet("font-size: 15px; font-weight: 600;")
+        zoom_out.setToolTip("Zoom out")
         zoom_out.clicked.connect(self._zoom_out)
         header.addWidget(zoom_out)
         self._zoom = QSlider(Qt.Orientation.Horizontal, self)
@@ -272,25 +276,27 @@ class TimelineWidget(QFrame):
         self._zoom.valueChanged.connect(self._apply_zoom)
         header.addWidget(self._zoom)
         zoom_in = QPushButton("+", self)
-        zoom_in.setFlat(True)
-        zoom_in.setFixedWidth(26)
-        zoom_in.setStyleSheet("font-size: 14px; font-weight: 600;")
+        zoom_in.setFixedSize(34, 34)
+        zoom_in.setStyleSheet("font-size: 15px; font-weight: 600;")
+        zoom_in.setToolTip("Zoom in")
         zoom_in.clicked.connect(self._zoom_in)
         header.addWidget(zoom_in)
-        self._add_btn = QPushButton("+", self)
-        self._add_btn.setFlat(True)
-        self._add_btn.setFixedWidth(26)
-        self._add_btn.setStyleSheet("font-size: 14px; font-weight: 600;")
+        # Labelled with visible text (not a bare "+" glyph): adding a
+        # manual range is the primary timeline action, and users could
+        # not find the old 26 px flat icon button.
+        self._add_btn = QPushButton("＋ Add clip range", self)
+        self._add_btn.setStyleSheet("font-weight: 600;")
+        self._add_btn.setMinimumHeight(34)
         self._add_btn.setToolTip("Add a clip range")
         self._add_btn.clicked.connect(self._on_add_clicked)
         header.addWidget(self._add_btn)
-        delete_btn = QPushButton("✕", self)
-        delete_btn.setFlat(True)
-        delete_btn.setFixedWidth(26)
+        delete_btn = QPushButton("✕ Delete", self)
+        delete_btn.setMinimumHeight(34)
         delete_btn.setStyleSheet("font-size: 13px; font-weight: 600;")
         delete_btn.setToolTip("Delete selected clip")
         delete_btn.clicked.connect(self._on_delete_clicked)
         header.addWidget(delete_btn)
+        self._delete_btn = delete_btn
         layout.addLayout(header)
 
         self._ruler = _Ruler(self)
@@ -302,9 +308,15 @@ class TimelineWidget(QFrame):
         layout.addLayout(self._rows_container)
         self._rows: list[_RangeRow] = []
 
-        self._empty = QLabel(f"+ {t('timeline.empty')}", self)
+        # The empty-state hint is a real (flat) button: clicking it adds
+        # a clip range, so the manual-cut path is discoverable without
+        # finding the header button first.
+        self._empty = QPushButton(f"+ {t('timeline.empty')}", self)
+        self._empty.setFlat(True)
         self._empty.setProperty("muted", True)
-        self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._empty.setStyleSheet("QPushButton:hover { text-decoration: underline; }")
+        self._empty.clicked.connect(self._on_add_clicked)
         layout.addWidget(self._empty)
 
         self._error_label = QLabel("", self)
@@ -355,13 +367,20 @@ class TimelineWidget(QFrame):
     def validation(self) -> RangeValidation:
         return self._validation
 
+    def _set_selected(self, index: int | None) -> None:
+        """Set the selected range index, emitting selection_changed."""
+        new = index if index is not None and 0 <= index < len(self._ranges) else None
+        if new != self._selected:
+            self._selected = new
+            self.selection_changed.emit(-1 if new is None else new)
+
     def set_ranges(self, ranges: list[ClipRange]) -> None:
         """Replace the manual ranges (used by the Edit step)."""
         self._ranges = [
             ClipRange(start=r.start, end=r.end, source=r.source, label=r.label)
             for r in ranges
         ]
-        self._selected = None
+        self._set_selected(None)
         self._rebuild_rows()
         self.refresh_ranges(emit=True)
 
@@ -389,7 +408,7 @@ class TimelineWidget(QFrame):
             if end - start < 1.0:  # no room at the end: start from 0
                 start, end = 0.0, min(30.0, self._duration)
         self._ranges.append(ClipRange(start=start, end=end, label=f"Clip {len(self._ranges) + 1}"))
-        self._selected = len(self._ranges) - 1
+        self._set_selected(len(self._ranges) - 1)
         self._rebuild_rows()
         self.refresh_ranges(emit=True)
         return True
@@ -397,13 +416,31 @@ class TimelineWidget(QFrame):
     def delete_range(self, index: int) -> None:
         if 0 <= index < len(self._ranges):
             del self._ranges[index]
-            self._selected = None
+            self._set_selected(None)
             self._rebuild_rows()
             self.refresh_ranges(emit=True)
 
     def select_range(self, index: int | None) -> None:
-        self._selected = index if index is not None and 0 <= index < len(self._ranges) else None
+        self._set_selected(index)
         self._ruler.update()
+
+    def set_range_bounds(self, index: int, start: float, end: float) -> None:
+        """Set one range's start/end (snapped + clamped); emits ranges_changed.
+
+        Used by the Viral Clips page's Clip length sync (v0.2.1): typing a
+        clip length resizes the selected range instead of silently doing
+        nothing in manual mode.
+        """
+        if not (0 <= index < len(self._ranges)):
+            return
+        rng = self._ranges[index]
+        start = max(0.0, self.snap_time(start))
+        end = min(self._duration if self._duration > 0 else end,
+                  self.snap_time(end))
+        if end <= start:
+            return
+        rng.start, rng.end = start, end
+        self.refresh_ranges(emit=True)
 
     def refresh_ranges(self, *, emit: bool) -> None:
         """Re-validate, redraw the ruler/rows, and notify listeners."""

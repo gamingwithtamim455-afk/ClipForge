@@ -48,6 +48,46 @@ def test_start_clipping_disabled_until_ready(window) -> None:
     window._show_home()
 
 
+def test_window_fits_small_screen(window) -> None:
+    # Regression: at 150% Windows scaling a 1080p screen offers only
+    # ~1280x720 logical px; the window used to demand 1280x800 minimum
+    # and its right side (Clip & Framing, timeline controls) was cut
+    # off. At 1024x700 the resize must stick and every Viral Clips
+    # panel must lie fully inside the window.
+    from clipforge.core.projects import Project
+
+    window._open_project(Project(name="small-screen-test"))
+    window._wizard.go_to_step(1)
+    window.resize(1024, 700)
+    window.show()
+    QApplication.processEvents()
+    try:
+        assert window.width() <= 1024
+        assert window.height() <= 700
+        viral = window._wizard._viral
+        bounds = window.rect()
+        panels = []
+        layout = viral.layout()
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if item.widget() is not None:
+                panels.append(item.widget())
+            elif item.layout() is not None:
+                for j in range(item.layout().count()):
+                    child = item.layout().itemAt(j).widget()
+                    if child is not None:
+                        panels.append(child)
+        # Left options, player, timeline, right Clip & Framing.
+        assert len(panels) == 4
+        for panel in panels:
+            rect = panel.rect().translated(
+                panel.mapTo(window, panel.rect().topLeft())
+            )
+            assert bounds.contains(rect), f"{panel!r} overflows: {rect} vs {bounds}"
+    finally:
+        window._show_home()
+
+
 def test_settings_dialog_opens(window) -> None:
     dialog = SettingsDialog(window._settings, window)
     assert dialog._stack.count() == 8  # incl. the Experimental tab

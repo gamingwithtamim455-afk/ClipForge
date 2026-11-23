@@ -149,21 +149,108 @@ def extract_audio(
     return out_path
 
 
-def run_ffmpeg(args: list[str], *, timeout: float = 3600.0) -> subprocess.CompletedProcess:
-    """Run ffmpeg with the given arguments; raise :class:`FFmpegError` on failure."""
+def run_ffmpeg(
+    args: list[str],
+    *,
+    timeout: float = 3600.0,
+    cancel: "Callable[[], bool] | None" = None,
+    progress: "Callable[[float], None] | None" = None,
+    duration: float | None = None,
+) -> subprocess.CompletedProcess:
+    """Run ffmpeg with the given arguments; raise :class:`FFmpegError` on failure.
+
+    With no ``cancel``/``progress`` this is a plain blocking run. When
+    either is given the process is polled instead:
+
+    - ``cancel`` is checked every ~0.2 s; when it fires the ffmpeg
+      subprocess is terminated (killed if it does not exit) and
+      ``FFmpegError("cancelled: ...")`` is raised — a cancelled encode
+      stops within a second instead of running to its timeout
+      (v0.2.1: Cancel used to hang for minutes because the encode was
+      one uninterruptible ``subprocess.run``).
+    - ``progress`` receives the encode fraction (0..1) parsed from
+      ffmpeg's ``-progress`` output against ``duration`` (the expected
+      output length in seconds), so the UI bar moves during the encode
+      instead of sitting on one number.
+    """
     ffmpeg = find_ffmpeg()
     if not ffmpeg:
         raise FFmpegError("ffmpeg not found (no bundled binary, none on PATH)")
-    proc = subprocess.run(
-        [ffmpeg, "-hide_banner", "-y", *args],
-        capture_output=True, text=True, timeout=timeout,
+    cmd = [ffmpeg, "-hide_banner", "-y", *args]
+    if cancel is None and progress is None:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout,
+        )
+        if proc.returncode != 0:
+            raise FFmpegError(
+                "ffmpeg failed (exit "
+                f"{proc.returncode}): {proc.stderr.strip()[-1500:]}"
+            )
+        return proc
+
+    import threading
+    import time
+
+    if progress is not None:
+        cmd += ["-progress", "pipe:1", "-nostats"]
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
+    stderr_chunks: list[str] = []
+
+    def _drain_stderr() -> None:
+        if proc.stderr is not None:
+            stderr_chunks.append(proc.stderr.read() or "")
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
+    def _read_progress() -> None:
+        if proc.stdout is None:
+            return
+        for line in proc.stdout:
+            if progress is None or not duration:
+                continue
+            key, _, value = line.partition("=")
+            if key.strip() == "out_time_ms":
+                try:
+                    frac = (int(value) / 1_000_000.0) / duration
+                except ValueError:
+                    continue
+                progress(max(0.0, min(1.0, frac)))
+
+    progress_thread = threading.Thread(target=_read_progress, daemon=True)
+    progress_thread.start()
+
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            returncode = proc.poll()
+            if returncode is not None:
+                break
+            if cancel is not None and cancel():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3.0)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=3.0)
+                raise FFmpegError("cancelled: ffmpeg terminated on user request")
+            if time.monotonic() > deadline:
+                proc.kill()
+                proc.wait(timeout=3.0)
+                raise FFmpegError(f"ffmpeg timed out after {timeout:.0f}s")
+            time.sleep(0.2)
+    finally:
+        progress_thread.join(timeout=1.0)
+        stderr_thread.join(timeout=1.0)
+    stderr_text = "".join(stderr_chunks)
     if proc.returncode != 0:
         raise FFmpegError(
             "ffmpeg failed (exit "
-            f"{proc.returncode}): {proc.stderr.strip()[-1500:]}"
+            f"{proc.returncode}): {stderr_text.strip()[-1500:]}"
         )
-    return proc
+    return subprocess.CompletedProcess(cmd, proc.returncode, "", stderr_text)
 
 
 #: GPU H.264 encoders, in preference order (NVENC > QSV > AMF).

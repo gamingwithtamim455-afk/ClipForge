@@ -12,7 +12,7 @@ from clipforge.providers.deepseek import (
 
 
 def test_version() -> None:
-    assert __version__ == "0.2.0"
+    assert __version__ == "0.2.1"
 
 
 def test_presets_load() -> None:

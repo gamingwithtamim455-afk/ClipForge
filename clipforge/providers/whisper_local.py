@@ -28,8 +28,19 @@ from typing import Callable
 
 from huggingface_hub import snapshot_download
 
+from ._http import ProviderError
+
 MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v3"]
 DEFAULT_MODEL = "small"
+
+#: Built Whisper models, keyed by (model_size, device, compute_type).
+#: Loading a model takes seconds and hundreds of MB; before v0.2.1 a
+#: fresh model was built for EVERY transcribe() call, so transcribing
+#: ten manual ranges paid the load ten times. Models are immutable in
+#: use (faster-whisper inference is stateless per call), so sharing one
+#: instance across calls in the same process is safe.
+_MODEL_CACHE: dict[tuple[str, str, str], object] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
 
 #: Signature of a download-progress callback: (percent 0-100, message).
 ProgressCallback = Callable[[int, str], None]
@@ -197,31 +208,51 @@ class WhisperLocalClient:
 
         Downloads the model first (with progress) when it is not cached;
         when cached, no download runs and ``download_progress`` is never
-        called.
+        called. Built models are cached process-wide (see
+        ``_MODEL_CACHE``) — repeat calls with the same size/device are
+        effectively free.
         """
         from faster_whisper import WhisperModel
 
         ensure_model_downloaded(self.model_size, progress=download_progress)
         device, compute_type = self._resolve_device()
+        key = (self.model_size, device, compute_type)
+        with _MODEL_CACHE_LOCK:
+            cached = _MODEL_CACHE.get(key)
+        if cached is not None:
+            return cached
         try:
-            return WhisperModel(self.model_size, device=device, compute_type=compute_type)
+            model = WhisperModel(self.model_size, device=device, compute_type=compute_type)
+            actual_key = key
         except Exception:
             if device != "cpu":
-                return WhisperModel(self.model_size, device="cpu", compute_type="int8")
-            raise
+                model = WhisperModel(self.model_size, device="cpu", compute_type="int8")
+                actual_key = (self.model_size, "cpu", "int8")
+            else:
+                raise
+        with _MODEL_CACHE_LOCK:
+            _MODEL_CACHE[actual_key] = model
+        return model
 
     def transcribe(
         self, audio_path: str, *, language: str | None = None,
         download_progress: ProgressCallback | None = None,
+        progress: ProgressCallback | None = None,
+        cancel: Callable[[], bool] | None = None,
     ) -> dict:
         """Transcribe an audio file locally.
 
         ``language`` is a BCP-47 code (``"bn"``, ``"en"``, ...) or ``None``
         for auto-detect. ``download_progress`` is called (percent, message)
         only while the model is being downloaded on first use; when the
-        model is already cached it is never called. Returns a dict with
-        the same shape as ``core.transcription.parse_whisper_result``
-        expects::
+        model is already cached it is never called. ``progress`` is called
+        per transcribed segment with the percent of the audio covered, so
+        a long file reports steady progress instead of 0% then 100%
+        (v0.2.1). ``cancel`` is polled per segment; when it fires,
+        ``ProviderError("cancelled", ...)`` is raised within a segment's
+        time instead of after the whole file (v0.2.1: Cancel used to wait
+        for the entire transcription). Returns a dict with the same shape
+        as ``core.transcription.parse_whisper_result`` expects::
 
             {"words": [{"text", "start", "end", "confidence"}],
              "utterances": [{"text", "start", "end"}],
@@ -231,9 +262,12 @@ class WhisperLocalClient:
         segments, info = model.transcribe(
             audio_path, language=language, word_timestamps=True
         )
+        total_duration = float(getattr(info, "duration", 0.0) or 0.0)
         words: list[dict] = []
         utterances: list[dict] = []
         for segment in segments:
+            if cancel is not None and cancel():
+                raise ProviderError("cancelled", "Transcription cancelled")
             utterances.append(
                 {
                     "text": segment.text.strip(),
@@ -249,6 +283,12 @@ class WhisperLocalClient:
                         "end": float(word.end),
                         "confidence": float(getattr(word, "probability", 1.0)),
                     }
+                )
+            if progress is not None and total_duration > 0:
+                percent = int(100 * float(segment.end) / total_duration)
+                progress(
+                    max(0, min(100, percent)),
+                    "Transcribing locally with Whisper…",
                 )
         return {
             "words": words,

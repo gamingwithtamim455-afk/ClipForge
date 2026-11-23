@@ -69,7 +69,17 @@ class MainWindow(QMainWindow):
         self._pipeline_result: PipelineResult | None = None
         self._pipeline_job: Job | None = None
         self.setWindowTitle(__app_name__)
-        self.resize(1280, 800)
+        # Initial size: 1280x800 at most, but never larger than the
+        # screen's available area — on a 1080p monitor with 150% Windows
+        # scaling the logical screen is only ~1280x720, and a fixed
+        # 1280x800 window overflowed it (right/bottom edges cut off).
+        width, height = 1280, 800
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            width = min(width, max(640, int(available.width() * 0.95)))
+            height = min(height, max(480, int(available.height() * 0.95)))
+        self.resize(width, height)
 
         self._stack = QStackedWidget(self)
         self.setCentralWidget(self._stack)
@@ -236,6 +246,11 @@ class MainWindow(QMainWindow):
             words=result.transcript.words,
             video_duration=wizard.video_duration,
         )
+        # The Edit preview shows each clip's reframed crop window, not
+        # the raw letterboxed source (v0.2.1 B).
+        wizard._edit.set_crop_paths(
+            result.crop_paths, result.width, result.height,
+        )
         # Default caption preset from Settings > Fonts (user can change
         # it per project in the Edit step before rendering).
         wizard._edit.set_caption_preset(str(self._settings.get("caption_preset")))
@@ -267,6 +282,11 @@ class MainWindow(QMainWindow):
     def _on_pipeline_failed(self, error: str) -> None:
         self._pipeline_job = None
         self._wizard.set_running(False)
+        if error.strip() == "Cancelled.":
+            # The user pressed Cancel: clean idle state, no error dialog.
+            self._wizard.set_status("Cancelled")
+            log.info("Pipeline cancelled by user")
+            return
         # run_job stringifies the exception; PipelineError messages are
         # already friendly, so show them as-is.
         self._wizard.set_status(f"Failed: {error}")

@@ -9,7 +9,11 @@ Rules (build spec §5):
   the face, penalize acceleration — no jitter), headroom, never cut off
   the head.
 - Crop coordinates come from native-resolution frames, before scaling.
-- Auto-fallback to blur-fit when no face is found.
+- Auto-fallback to a centred FILL crop when no face is found: the
+  rendered clip always fills the whole output frame (an earlier
+  "blur-fit" fallback fitted the whole 16:9 picture inside the 9:16
+  canvas over a blurred background — letterboxed output the user
+  rejected; that mode was removed in v0.2.1).
 - Two people sharing a clip (both present through the range) get a
   two-up split-screen path when the Experimental setting is on.
 - Auto-QA: face inside the crop in >= 99% of sampled frames; otherwise
@@ -23,6 +27,7 @@ import tempfile
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -114,7 +119,7 @@ class CropPath:
     times: list[float] = field(default_factory=list)
     boxes: list[FaceBox] = field(default_factory=list)
     faces: list[FaceBox | None] = field(default_factory=list)
-    mode: str = "track"  # "track" | "blur-fit" | "split"
+    mode: str = "track"  # "track" | "split"
     qa_face_inside_fraction: float = 1.0
     qa_passed: bool = True
     needs_review: bool = False  # True when QA failed even after retry
@@ -382,6 +387,8 @@ def _detect_faces_in_frames(
     *,
     min_detection_confidence: float = 0.5,
     scene_cuts: list[bool] | None = None,
+    progress: Callable[[float], None] | None = None,
+    cancel: Callable[[], bool] | None = None,
 ) -> tuple[list[list[FaceBox]], list[bool]]:
     """Run detection + landmarks over the sampled frames.
 
@@ -389,6 +396,10 @@ def _detect_faces_in_frames(
     in) and per-sample scene-cut flags. ``scene_cuts`` (when given, one
     flag per frame, e.g. from PySceneDetect via :func:`scene_cut_flags`)
     is used as-is; otherwise the frame-diff fallback runs.
+
+    ``progress`` receives the fraction of frames processed (0..1) and
+    ``cancel`` is polled per frame — a long scan must stay interruptible
+    (v0.2.1: cancel used to wait for the whole scan to finish).
     """
     import cv2
     from mediapipe.tasks.python import vision
@@ -422,7 +433,12 @@ def _detect_faces_in_frames(
             scene_cut = _frame_diff_scene_cuts(frames)
         next_identity = 1
         prev_faces: list[FaceBox] = []
-        for frame, _is_cut in zip(frames, scene_cut):
+        total_frames = max(len(frames), 1)
+        for frame_i, (frame, _is_cut) in enumerate(zip(frames, scene_cut)):
+            if cancel is not None and cancel():
+                raise RuntimeError("face tracking cancelled")
+            if progress is not None:
+                progress((frame_i + 1) / total_frames)
             if frame is None:
                 detected.append([])
                 continue
@@ -665,6 +681,8 @@ def track_faces(
     sample_fps: float = 5.0,
     min_detection_confidence: float = 0.5,
     split_screen: bool = True,
+    progress: Callable[[float], None] | None = None,
+    cancel: Callable[[], bool] | None = None,
 ) -> CropPath:
     """Compute the smoothed crop path for a clip range.
 
@@ -674,6 +692,11 @@ def track_faces(
     ``split_screen`` is on (Settings > Experimental) and two people
     genuinely share the clip, the path is a two-up split instead — see
     :func:`dominant_identity_pair`.
+
+    ``progress`` receives the scan fraction (0..1: frame sampling is the
+    first half, detection the second) so the UI bar keeps moving during
+    a long scan; ``cancel`` is polled while sampling and detecting and
+    aborts the scan with ``RuntimeError("face tracking cancelled")``.
     """
     import cv2
     import mediapipe as mp
@@ -707,6 +730,10 @@ def track_faces(
         cap.set(cv2.CAP_PROP_POS_MSEC, start * 1000.0)
         frames: list[np.ndarray | None] = []
         for i in range(n_samples):
+            if cancel is not None and cancel():
+                raise RuntimeError("face tracking cancelled")
+            if progress is not None:
+                progress(0.5 * (i + 1) / max(n_samples, 1))
             ok, frame = cap.read()
             if not ok or frame is None:
                 frames.append(None)
@@ -763,6 +790,11 @@ def track_faces(
         frames, det_w, det_h,
         min_detection_confidence=min_detection_confidence,
         scene_cuts=cut_flags,
+        progress=(
+            (lambda frac: progress(0.5 + 0.5 * frac))
+            if progress is not None else None
+        ),
+        cancel=cancel,
     )
 
     # Lip movement: std of openness over a +-0.3 s window, per identity.
@@ -830,7 +862,13 @@ def track_faces(
 
     fallback_fraction = fallback / max(len(active), 1)
     if fallback_fraction >= 1.0:
-        # No face anywhere: blur-fit fallback (center crop, render blurs).
+        # No face anywhere: CENTRED FILL CROP. The crop window has the
+        # output aspect and the renderer scales it to fill the whole
+        # frame, so the clip still fills the 9:16 canvas edge to edge.
+        # (The old "blur-fit" fallback fitted the whole 16:9 picture
+        # inside the canvas over a blurred background — letterboxed
+        # output; removed in v0.2.1.) Flagged needs_review so the Edit
+        # step tells the user no face was found and framing is centred.
         cx = (frame_w - crop_w) / 2
         cy = (frame_h - crop_h) / 2
         return CropPath(
@@ -838,10 +876,10 @@ def track_faces(
             boxes=[FaceBox(x=cx, y=cy, width=float(crop_w), height=float(crop_h))
                    for _ in times],
             faces=[None] * len(times),
-            mode="blur-fit",
+            mode="track",
             qa_face_inside_fraction=1.0,
             qa_passed=True,
-            needs_review=False,
+            needs_review=True,
             fallback_fraction=1.0,
         )
 

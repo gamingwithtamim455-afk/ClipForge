@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -28,7 +29,7 @@ from PySide6.QtWidgets import (
 
 from ..core.jobs import run_job
 from ..core.paths import app_data_dir
-from ..core.projects import Project, ProjectStore
+from ..core.projects import Project, ProjectStore, delete_project_files
 from ..core.thumbnails import generate_thumbnail
 from ..i18n import t
 from .splash import SidebarBranding
@@ -222,10 +223,38 @@ class HomePage(QWidget):
         for project in projects:
             card = ProjectCard(project, self._grid_widget)
             card.clicked.connect(lambda _pid, p=project: self.project_opened.emit(p))
+            card.delete_requested.connect(self._on_delete_project)
             self._cards.append(card)
         self._relayout()
         self._count_badge.setText(str(len(self._store.projects)))
         self._queue_thumbnail_repairs(projects)
+
+    def _on_delete_project(self, project_id: str) -> None:
+        """Confirm, then delete a project + its own generated files.
+
+        The confirmation states plainly that the original video file is
+        NOT deleted; :func:`delete_project_files` enforces that.
+        """
+        project = next(
+            (p for p in self._store.projects if p.id == project_id), None
+        )
+        if project is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Delete project",
+            f"Delete project “{project.name}”?\n\n"
+            "This removes the project and its rendered clips and "
+            "thumbnail from ClipForge.\n"
+            "Your original video file will not be deleted.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        delete_project_files(project)
+        self._store.remove(project.id)
+        self.refresh()
 
     def _queue_thumbnail_repairs(self, projects: list[Project]) -> None:
         """Generate missing thumbnails in the background (Home B1 fix).

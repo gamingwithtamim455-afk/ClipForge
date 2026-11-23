@@ -79,7 +79,7 @@ def _make_clip(tmp_path: Path) -> str:
 
 def _stub_detector(monkeypatch, *, two_faces: bool) -> None:
     def fake(frames, frame_w, frame_h, *, min_detection_confidence=0.5,
-             scene_cuts=None):
+             scene_cuts=None, progress=None, cancel=None):
         detected = []
         for _ in frames:
             boxes = [_face(1, 0.08)]

@@ -583,3 +583,88 @@ def test_quality_labels_map_to_exact_render_dimensions() -> None:
         assert settings.quality_label == label
         # High-quality encoding defaults are part of the quality gate.
         assert settings.crf <= 16
+
+
+# ---------------------------------------------------------------------------
+# v0.2.1 H: manual + Cutout Only must skip transcription entirely
+# ---------------------------------------------------------------------------
+
+def test_manual_cutout_only_skips_transcription(tmp_path, monkeypatch) -> None:
+    """Face tracking + cutting need no transcript (H).
+
+    With manual ranges and captions="none" the pipeline must not call
+    either transcription entry point — on a CPU-only PC that Whisper
+    pass was the multi-minute stall at 5%. The run still renders.
+    """
+    def _boom(*args, **kwargs):
+        raise AssertionError("transcription must be skipped for manual Cutout Only")
+
+    monkeypatch.setattr("clipforge.core.pipeline.transcribe_ranges", _boom)
+    monkeypatch.setattr("clipforge.core.pipeline.transcribe_video", _boom)
+
+    video = _make_video(tmp_path)
+    config = PipelineConfig(
+        video_path=video,
+        language="en",
+        engine="deepgram",
+        manual_ranges=[ClipRange(start=2.0, end=6.0, label="Clip 1")],
+        captions="none",
+        export_dir=str(tmp_path / "exports"),
+        project_name="cutout-test",
+        render_settings=RenderSettings(
+            width=360, height=640, crf=18, preset="veryfast", captions="none",
+        ),
+    )
+    result = run_pipeline(
+        config,
+        deepgram_client=FakeDeepgram(),
+        track_faces_fn=lambda video_path, **kw: _fake_crop_path(),
+    )
+    assert result.used_manual_ranges is True
+    assert result.transcript.words == []
+    assert len(result.render_jobs) == 1
+
+    results = render_pipeline_jobs(result.render_jobs, label_client=None)
+    assert len(results) == 1
+    assert Path(results[0].video_path).exists()
+    info = probe(results[0].video_path)
+    assert (info.width, info.height) == (360, 640)
+
+
+def test_manual_burn_captions_transcribes_only_the_ranges(
+    tmp_path, monkeypatch
+) -> None:
+    """Manual + Burn Captions: transcription happens, ranges only."""
+    calls: list[list[tuple[float, float]]] = []
+    real_transcribe_ranges = __import__(
+        "clipforge.core.transcription", fromlist=["transcribe_ranges"]
+    ).transcribe_ranges
+
+    def _spy(video_path, ranges, **kwargs):
+        calls.append(list(ranges))
+        return real_transcribe_ranges(video_path, ranges, **kwargs)
+
+    def _no_full_video(*args, **kwargs):
+        raise AssertionError("manual mode must never transcribe the whole video")
+
+    monkeypatch.setattr("clipforge.core.pipeline.transcribe_ranges", _spy)
+    monkeypatch.setattr("clipforge.core.pipeline.transcribe_video", _no_full_video)
+
+    video = _make_video(tmp_path)
+    config = PipelineConfig(
+        video_path=video,
+        language="en",
+        engine="deepgram",
+        manual_ranges=[ClipRange(start=2.0, end=6.0, label="Clip 1")],
+        captions="burn",
+        export_dir=str(tmp_path / "exports"),
+        project_name="burn-test",
+        render_settings=_small_settings(),
+    )
+    result = run_pipeline(
+        config,
+        deepgram_client=FakeDeepgram(),
+        track_faces_fn=lambda video_path, **kw: _fake_crop_path(),
+    )
+    assert calls == [[(2.0, 6.0)]]
+    assert result.transcript.words  # captions have words to burn

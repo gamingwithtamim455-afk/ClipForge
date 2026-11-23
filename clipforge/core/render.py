@@ -225,15 +225,6 @@ def _filter_graph(
             f"scale={width}:{height - pane_h}:flags=lanczos,setsar=1[bot];"
             f"[top][bot]vstack=inputs=2{ass},format=yuv420p[vout]"
         )
-    if crop_path is not None and crop_path.mode == "blur-fit":
-        # No face: blurred cover background + fitted foreground.
-        return (
-            f"[0:v]split=2[bg_in][fg_in];"
-            f"[bg_in]scale={width}:{height}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{height},gblur=sigma=40[bg];"
-            f"[fg_in]scale={width}:{height}:force_original_aspect_ratio=decrease[fg];"
-            f"[bg][fg]overlay=(W-w)/2:(H-h)/2{ass},format=yuv420p[vout]"
-        )
     if crop_path is not None:
         # Tracked crop: sendcmd drives x/y along the smoothed path.
         return (
@@ -432,6 +423,7 @@ def render_clip(
     label: tuple[str, list[str]] | None = None,
     overlays: list[CaptionOverlay] | None = None,
     on_progress: Callable[[int, str], None] | None = None,
+    cancel: Callable[[], bool] | None = None,
 ) -> ClipResult:
     """Render one clip in a single FFmpeg encode pass.
 
@@ -571,7 +563,11 @@ def render_clip(
                 width=settings.width, height=settings.height, ass_path=ass_path,
                 fontsdir=custom_fontsdir,
             )
-            if crop_path is not None and crop_path.mode == "track":
+            if crop_path is not None and crop_path.mode != "split":
+                # Any single-crop path (tracked, centred fill, or a legacy
+                # "blur-fit" path whose boxes are the centred crop) is
+                # driven by the sendcmd file — the crop always FILLS the
+                # output frame; there is no fit/pad graph anymore.
                 _sendcmd_file(tmp_path / "crop.cmds",
                               crop_path=crop_path, crop_w=crop_w, crop_h=crop_h)
                 graph = graph.replace(
@@ -611,8 +607,20 @@ def render_clip(
             ]
             _report(20, f"Encoding with {encoder}…")
             try:
-                run_ffmpeg(args, timeout=max(600.0, expected * 30.0))
+                run_ffmpeg(
+                    args, timeout=max(600.0, expected * 30.0),
+                    cancel=cancel,
+                    progress=(
+                        (lambda frac: _report(
+                            20 + int(frac * 65), f"Encoding with {encoder}…"
+                        ))
+                        if on_progress is not None else None
+                    ),
+                    duration=expected,
+                )
             except FFmpegError as exc:
+                if "cancelled" in str(exc):
+                    raise RenderError("cancelled") from exc
                 raise RenderError(f"encode failed: {exc}") from exc
             _report(85, "Verifying output…")
 
@@ -645,8 +653,10 @@ def render_clip(
             f"upscaled: source is {info.width}x{info.height}, output is "
             f"{settings.width}x{settings.height}"
         )
-    if crop_path is not None and crop_path.mode == "blur-fit":
-        flags.append("no face found — used blur-fit background")
+    if crop_path is not None and crop_path.fallback_fraction >= 1.0:
+        flags.append(
+            "no face found — used a centred fill crop (check the framing)"
+        )
     if crop_path is not None and crop_path.mode == "split":
         flags.append("two-person split screen")
     if crop_path is not None and crop_path.needs_review:
@@ -691,11 +701,14 @@ def render_clips(
     jobs: list[RenderJob],
     *,
     on_progress: Callable[[int, str], None] | None = None,
+    cancel: Callable[[], bool] | None = None,
 ) -> list[ClipResult]:
     """Render a batch of clips (used by the Render step)."""
     results: list[ClipResult] = []
     total = max(len(jobs), 1)
     for i, job in enumerate(jobs):
+        if cancel is not None and cancel():
+            raise RenderError("cancelled")
         def _job_progress(percent: int, message: str, _i=i) -> None:
             if on_progress is not None:
                 overall = int((_i + percent / 100.0) / total * 100)
@@ -707,6 +720,7 @@ def render_clips(
             crop_path=job.crop_path, words=job.words,
             language=job.language, output_path=job.output_path,
             label=job.label, overlays=job.overlays, on_progress=_job_progress,
+            cancel=cancel,
         ))
     return results
 

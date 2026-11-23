@@ -63,11 +63,12 @@ def _frame_md5(video: str, frame_no: int) -> str:
 
 
 # -- end-to-end render -------------------------------------------------
-def test_render_clip_e2e_blur_fit(tmp_path) -> None:
+def test_render_clip_e2e_no_face_fill_crop(tmp_path) -> None:
     """Spec defaults (CRF 15, preset slow) on a faceless clip.
 
     Verifies: 1080x1920 output, duration within 1 frame of 3.0 s,
-    blur-fit fallback flag, upscaling flag, label file with 4 hashtags.
+    centred-fill-crop fallback flag (the letterboxing blur-fit graph
+    was removed in v0.2.1), upscaling flag, label file with 4 hashtags.
     """
     src = _make_source(tmp_path)
     out = str(tmp_path / "clip01.mp4")
@@ -85,7 +86,8 @@ def test_render_clip_e2e_blur_fit(tmp_path) -> None:
     assert info.duration == pytest.approx(3.0, abs=1 / 30 + 0.02)
     assert result.encoder == "libx264"  # no GPU encoder on this VM
     assert result.upscaled  # 720p source -> 1920 high
-    assert any("blur-fit" in f for f in result.flags)
+    assert any("centred fill crop" in f for f in result.flags)
+    assert not any("blur-fit" in f for f in result.flags)
     assert result.label_written
     label_path = Path(result.label_path)
     assert label_path.name == "01_label.txt"

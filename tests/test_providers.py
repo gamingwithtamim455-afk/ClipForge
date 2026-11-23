@@ -309,3 +309,86 @@ def test_deepgram_model_choice_reaches_listen_params() -> None:
                             session=session, backoff_base=0)
     client.transcribe_chunk(b"wav-bytes", language="en")
     assert session.calls[0]["params"]["model"] == "nova-2"
+
+
+# ---------------------------------------------------------------------------
+# v0.2.1 C/D/E: Whisper model cache, per-segment progress, cancel
+# ---------------------------------------------------------------------------
+
+def _install_counting_whisper(monkeypatch, *, n_segments=3, duration=3.0):
+    """Fake faster-whisper whose model counts its own constructions."""
+    import sys
+    import types
+
+    from clipforge.providers import whisper_local
+
+    whisper_local._MODEL_CACHE.clear()
+    monkeypatch.setattr(
+        whisper_local, "ensure_model_downloaded", lambda *a, **k: False
+    )
+    state = {"constructions": 0, "consumed": 0}
+
+    class FakeWord:
+        def __init__(self, word, start, end):
+            self.word, self.start, self.end = word, start, end
+            self.probability = 0.9
+
+    class FakeSegment:
+        def __init__(self, i):
+            self.text = f" segment {i} "
+            self.start = float(i)
+            self.end = float(i + 1)
+            self.words = [FakeWord(f"w{i}", self.start, self.end)]
+
+    class FakeInfo:
+        language = "en"
+
+        def __init__(self):
+            self.duration = duration
+
+    class FakeModel:
+        def __init__(self, *args, **kwargs):
+            state["constructions"] += 1
+
+        def transcribe(self, path, **kwargs):
+            def _gen():
+                for i in range(n_segments):
+                    state["consumed"] += 1
+                    yield FakeSegment(i)
+
+            return _gen(), FakeInfo()
+
+    fake_module = types.ModuleType("faster_whisper")
+    fake_module.WhisperModel = FakeModel
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_module)
+    return state
+
+
+def test_whisper_model_is_built_once_across_calls(monkeypatch) -> None:
+    """C: transcribing many ranges must not reload the model per range."""
+    state = _install_counting_whisper(monkeypatch)
+    WhisperLocalClient(model_size="base", device="cpu").transcribe("a.wav")
+    WhisperLocalClient(model_size="base", device="cpu").transcribe("b.wav")
+    WhisperLocalClient(model_size="base", device="cpu").transcribe("c.wav")
+    assert state["constructions"] == 1
+
+
+def test_whisper_progress_reports_per_segment(monkeypatch) -> None:
+    """E: progress climbs per segment instead of jumping 0 -> 100."""
+    _install_counting_whisper(monkeypatch, n_segments=3, duration=3.0)
+    seen: list[int] = []
+    WhisperLocalClient(model_size="base", device="cpu").transcribe(
+        "a.wav", progress=lambda p, _m: seen.append(p)
+    )
+    assert seen == [33, 66, 100]
+
+
+def test_whisper_cancel_stops_between_segments(monkeypatch) -> None:
+    """D: cancel fires mid-transcription, not after the whole file."""
+    state = _install_counting_whisper(monkeypatch, n_segments=50, duration=50.0)
+    with pytest.raises(ProviderError) as excinfo:
+        WhisperLocalClient(model_size="base", device="cpu").transcribe(
+            "a.wav", cancel=lambda: state["consumed"] >= 2
+        )
+    assert excinfo.value.kind == "cancelled"
+    assert state["consumed"] <= 3  # stopped almost immediately
